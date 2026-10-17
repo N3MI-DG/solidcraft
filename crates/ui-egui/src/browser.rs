@@ -266,6 +266,8 @@ pub fn group_action(app: &mut SolveApp, action: &str, p: &Value) {
 
 const ROW_H: f32 = 22.0;
 const INDENT: f32 = 14.0;
+/// Opacity of a dimmed row's icon (a hidden body, sketch, origin item, …).
+const DIM_ICON_OPACITY: f32 = 0.4;
 
 /// One row's look.
 #[derive(Default)]
@@ -329,7 +331,6 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     }
     let mut x = r.left() + 2.0 + row.depth as f32 * INDENT;
     let cy = r.center().y;
-    let ink = if row.dim { t.text_dim } else { t.icon };
     // The row is one widget: where a click lands decides what it does (the fold arrow with
     // padding, the eye, the radio, or the row itself), so a click on the arrow never also
     // selects the row or starts a drag.
@@ -363,7 +364,8 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     // Eye.
     if let Some(vis) = row.eye {
         let er = Rect::from_center_size(pos2(x + 8.0, cy), vec2(15.0, 15.0));
-        icons::paint(ui.painter(), er, "eye", if vis { ink } else { t.border }, t.icon_fill, t.accent);
+        // A closed eye, or the eye of a faded row, draws faint like the row's icon.
+        icons::paint_icon(ui.painter(), er, "eye", if vis && !row.dim { 1.0 } else { DIM_ICON_OPACITY });
         if !vis {
             ui.painter().line_segment([er.left_bottom() + vec2(2.0, -2.0), er.right_top() + vec2(-2.0, 2.0)], Stroke::new(1.4, t.text_dim));
         }
@@ -383,7 +385,9 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     }
     if !row.icon.is_empty() {
         let ir = Rect::from_min_size(pos2(x, cy - 8.0), vec2(16.0, 16.0));
-        icons::paint(ui.painter(), ir, row.icon, ink, if row.dim { t.panel_header } else { t.icon_fill }, t.accent);
+        // Icons are full-colour images (a tint colour only sets their opacity): a hidden or
+        // faded row draws its icon faint, like its label.
+        icons::paint_icon(ui.painter(), ir, row.icon, if row.dim { DIM_ICON_OPACITY } else { 1.0 });
         x += 21.0;
     }
     let col = row.color.unwrap_or(if row.dim { t.text_dim } else { t.text });
