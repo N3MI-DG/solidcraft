@@ -113,12 +113,13 @@ impl OccMove {
 // Queries used by the menus
 // ---------------------------------------------------------------------------------------------
 
-/// Is a sketch drawn in the viewport?
+/// Is a sketch shown itself (its eye)? A hidden Sketches folder or component still keeps it out
+/// of the viewport (`solidcraft_engine::view::sketch_drawn`).
 pub fn sketch_visible(app: &SolveApp, id: u64) -> bool {
     if app.session.visibility.hidden_sketches.contains(&id) {
         return false;
     }
-    app.session.visibility.shown_sketches.contains(&id) || (app.ui.show_sketches && !solidcraft_engine::view::sketch_consumed(&app.session, id))
+    app.session.visibility.shown_sketches.contains(&id) || !solidcraft_engine::view::sketch_consumed(&app.session, id)
 }
 
 pub fn set_sketch_visible(app: &mut SolveApp, id: u64, on: bool) {
@@ -1507,8 +1508,9 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         }
     }
     let open = is_open(app, &key, true);
-    // Everything under a hidden placement fades, whatever its own eye says.
-    let parent_hidden = path.is_some_and(|p| !app.session.occurrence_visible(p));
+    // Everything under a hidden placement, or in the hidden Sketches folder, fades whatever its
+    // own eye says.
+    let parent_hidden = path.is_some_and(|p| !app.session.occurrence_visible(p)) || (folder == "sketches" && !app.ui.show_sketches);
     let any_visible = if folder == "sketches" { app.ui.show_sketches } else { all.iter().any(|e| e.visible) };
     let r = draw_row(
         ui,
@@ -1612,7 +1614,7 @@ fn entry_row(
     depth: usize,
     group: Option<u64>,
     loose: &[String],
-    // A placement above is hidden: the row fades, its eye stays its own.
+    // A placement or folder above is hidden: the row fades, its eye stays its own.
     parent_hidden: bool,
     acts: &mut Actions,
 ) {
@@ -1929,7 +1931,12 @@ pub fn dims_overlay(app: &SolveApp, ctx: &egui::Context) {
     let proj = crate::viewport::projection(app, rect);
     let painter = ctx.layer_painter(egui::LayerId::background()).with_clip_rect(rect);
     let st = app.session.world_state();
-    for id in app.ui.shown_dims.iter().filter(|id| app.session.active_sketch != Some(**id) && sketch_visible(app, **id)) {
+    for id in app
+        .ui
+        .shown_dims
+        .iter()
+        .filter(|id| app.session.active_sketch != Some(**id) && solidcraft_engine::view::sketch_drawn(&app.session, **id, app.ui.show_sketches))
+    {
         let Some(ss) = st.sketch(*id) else { continue };
         let sk = &ss.sketch;
         let to = |p: Vec2| proj.to_screen(ss.plane.to_world(p));
