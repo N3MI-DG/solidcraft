@@ -1305,7 +1305,7 @@ pub fn browser_joints(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(any_visible), icon: "folder", label: "Joints", ..Default::default() },
+        &Row { depth, fold: Some(open), eye: Some(any_visible), icon: "folder", label: "Joints", dim: !any_visible, ..Default::default() },
     );
     if r.eye {
         let _ = app.run("browser.visibility", json!({ "folder": "joints", "visible": !any_visible }));

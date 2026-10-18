@@ -882,7 +882,15 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(app.ui.show_origin), icon: "origin", label: "Origin", ..Default::default() },
+        &Row {
+            depth,
+            fold: Some(open),
+            eye: Some(app.ui.show_origin),
+            icon: "origin",
+            label: "Origin",
+            dim: !app.ui.show_origin,
+            ..Default::default()
+        },
     );
     if r.fold || r.clicked {
         toggle(app, key, false);
@@ -916,7 +924,8 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
         let r = draw_row(
             ui,
             ui.id().with(("o", k)),
-            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !app.ui.show_origin, ..Default::default() },
+            // Faded when hidden itself or with the whole Origin.
+            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !visible || !app.ui.show_origin, ..Default::default() },
         );
         if r.eye {
             if visible {
@@ -1029,7 +1038,7 @@ fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(visible), icon: "folder", label: "Analysis", ..Default::default() },
+        &Row { depth, fold: Some(open), eye: Some(visible), icon: "folder", label: "Analysis", dim: !visible, ..Default::default() },
     );
     if r.fold || r.clicked {
         toggle(app, key, true);
@@ -1093,8 +1102,11 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
     let key = "canvases";
     let open = is_open(app, key, true);
     let any = canvases.iter().any(|c| c.2);
-    let r =
-        draw_row(ui, ui.id().with(key), &Row { depth, fold: Some(open), eye: Some(any), icon: "folder", label: "Canvases", ..Default::default() });
+    let r = draw_row(
+        ui,
+        ui.id().with(key),
+        &Row { depth, fold: Some(open), eye: Some(any), icon: "folder", label: "Canvases", dim: !any, ..Default::default() },
+    );
     if r.fold || r.clicked {
         toggle(app, key, true);
     }
@@ -1495,11 +1507,21 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         }
     }
     let open = is_open(app, &key, true);
+    // Everything under a hidden placement fades, whatever its own eye says.
+    let parent_hidden = path.is_some_and(|p| !app.session.occurrence_visible(p));
     let any_visible = if folder == "sketches" { app.ui.show_sketches } else { all.iter().any(|e| e.visible) };
     let r = draw_row(
         ui,
         ui.id().with(&key),
-        &Row { depth, fold: Some(open), eye: Some(any_visible), icon: "folder", label: folder_label(folder), ..Default::default() },
+        &Row {
+            depth,
+            fold: Some(open),
+            eye: Some(any_visible),
+            icon: "folder",
+            label: folder_label(folder),
+            dim: !any_visible || parent_hidden,
+            ..Default::default()
+        },
     );
     if r.fold || r.clicked {
         toggle(app, &key, true);
@@ -1544,7 +1566,7 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
                 icon: "folder",
                 label: &label,
                 name: true,
-                dim: !gvis,
+                dim: !gvis || parent_hidden,
                 ..Default::default()
             },
         );
@@ -1568,12 +1590,12 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         }
         if gopen {
             for e in items {
-                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &loose_keys, acts);
+                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &loose_keys, parent_hidden, acts);
             }
         }
     }
     for e in &loose {
-        entry_row(app, ui, comp, path, fstatic, e, depth + 1, None, &loose_keys, acts);
+        entry_row(app, ui, comp, path, fstatic, e, depth + 1, None, &loose_keys, parent_hidden, acts);
     }
     let _ = t;
 }
@@ -1590,6 +1612,8 @@ fn entry_row(
     depth: usize,
     group: Option<u64>,
     loose: &[String],
+    // A placement above is hidden: the row fades, its eye stays its own.
+    parent_hidden: bool,
     acts: &mut Actions,
 ) {
     app.tree.order.push(e.row_key.clone());
@@ -1609,7 +1633,7 @@ fn entry_row(
             label: &e.label,
             name: true,
             selected: e.selected,
-            dim: !e.visible,
+            dim: !e.visible || parent_hidden,
             color: e.color,
             badges,
             ..Default::default()
@@ -1658,7 +1682,7 @@ fn entry_row(
         acts.menu = Some((p, t));
     }
     if let Some(sketch) = pattern_sketch.filter(|_| patterns_open) {
-        crate::sketch_pattern_tree::rows(app, ui, sketch, depth + 1, "browser", path.map(|path| (comp, path)));
+        crate::sketch_pattern_tree::rows(app, ui, sketch, depth + 1, "browser", path.map(|path| (comp, path)), !e.visible || parent_hidden);
     }
     let Some(resp) = &r.resp else { return };
     // Drag: the selected items of this folder when this one is selected, else just this one.
