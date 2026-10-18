@@ -155,24 +155,23 @@ pub fn group_name(app: &SolveApp, id: u64) -> Option<String> {
 }
 
 /// The menu of a group row.
-pub fn group_items(app: &SolveApp, id: u64) -> Vec<Item> {
+pub fn group_items(app: &SolveApp, id: u64, scope: &str) -> Vec<Item> {
     let Some(g) = find_group(app, id) else { return Vec::new() };
     let mut v = vec![
         Item::action("ui.rename", "Rename", "").with(json!({ "group": id })),
         Item::action("ui.ungroup", "Ungroup", "folder").with(json!({ "group": id })),
+        Item::sep(),
+        // The group itself: its items keep their own state.
+        Item::action("ui.folderVisible", "Show/Hide", "eye").key("V").with(json!({ "key": format!("{scope}/g{id}") })),
     ];
     if g.folder == "bodies" {
-        let bodies = group_bodies(app, id);
-        let hidden = !bodies.is_empty() && bodies.iter().all(|b| app.session.visibility.hidden_bodies.contains(b));
-        v.push(Item::sep());
-        v.push(Item::action(if hidden { "ui.show" } else { "ui.hide" }, "Show/Hide", "eye").key("V").with(json!({ "bodies": bodies })));
-        v.push(Item::action("ui.isolate", "Isolate", "").with(json!({ "bodies": bodies })));
+        v.push(Item::action("ui.isolate", "Isolate", "").with(json!({ "bodies": group_bodies(app, id) })));
     }
     v
 }
 
 /// The menu of a folder row (Bodies, Sketches, Construction).
-pub fn folder_items(app: &SolveApp, component: u64, folder: &str) -> Vec<Item> {
+pub fn folder_items(app: &SolveApp, component: u64, folder: &str, scope: &str) -> Vec<Item> {
     let sel: Vec<String> = selected_keys(app, component, folder);
     let all = entries(app, component, folder);
     let mut v = Vec::new();
@@ -188,7 +187,7 @@ pub fn folder_items(app: &SolveApp, component: u64, folder: &str) -> Vec<Item> {
         v.push(Item::action("ui.groupSelected", "Group Selected", "folder").with(json!({ "component": component, "folder": folder, "items": sel })));
     }
     v.push(Item::sep());
-    v.push(Item::action("ui.folderVisible", "Show/Hide", "eye").key("V").with(json!({ "component": component, "folder": folder })));
+    v.push(Item::action("ui.folderVisible", "Show/Hide", "eye").key("V").with(json!({ "key": format!("{scope}/{folder}") })));
     v.push(Item::action("ui.showAll", "Show All", "eye"));
     v
 }
@@ -206,16 +205,10 @@ pub fn origin_items(app: &SolveApp) -> Vec<Item> {
     ]
 }
 
-/// Show or hide everything in a component folder.
-pub fn toggle_folder(app: &mut SolveApp, component: u64, folder: &str) {
-    if folder == "sketches" {
-        app.ui.show_sketches = !app.ui.show_sketches;
-        return;
-    }
-    let all = entries(app, component, folder);
-    let any = all.iter().any(|e| e.visible);
-    let refs: Vec<&Entry> = all.iter().collect();
-    set_visible(app, folder, &refs, !any);
+/// Show or hide a browser folder or group itself, by tree key (`c0/bodies`, `o:4/g7`): its
+/// items keep their own state, and hiding or showing them never changes it.
+pub fn toggle_folder(app: &mut SolveApp, key: &str) {
+    let _ = app.run("browser.visibility", json!({ "tree_folders": [key], "visible": app.session.folder_hidden(key) }));
 }
 
 /// Selected browser items of the folder of a body or sketch, when more than one (for Group
@@ -1094,6 +1087,9 @@ pub fn section_items(app: &SolveApp) -> Vec<Item> {
     ]
 }
 
+/// The Canvases folder's tree key (`Visibility::hidden_folders`).
+pub const CANVASES: &str = "c0/canvases";
+
 /// The Canvases folder (reference images) with an eye per canvas.
 fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut Actions) {
     let canvases: Vec<(u64, String, bool)> = app.session.doc.canvases.iter().map(|c| (c.id, c.name.clone(), c.visible)).collect();
@@ -1102,19 +1098,18 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
     }
     let key = "canvases";
     let open = is_open(app, key, true);
-    let any = canvases.iter().any(|c| c.2);
+    // The folder's eye is its own: each canvas keeps its eye while the folder hides them all.
+    let shown = !app.session.folder_hidden(CANVASES);
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(any), icon: "folder", label: "Canvases", dim: !any, ..Default::default() },
+        &Row { depth, fold: Some(open), eye: Some(shown), icon: "folder", label: "Canvases", dim: !shown, ..Default::default() },
     );
     if r.fold || r.clicked {
         toggle(app, key, true);
     }
     if r.eye {
-        for (id, _, _) in &canvases {
-            let _ = app.run("canvas.edit", json!({ "canvas": id, "visible": !any }));
-        }
+        toggle_folder(app, CANVASES);
     }
     if !open {
         return;
@@ -1124,7 +1119,16 @@ fn canvas_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut A
         let r = draw_row(
             ui,
             ui.id().with(("canvas", id)),
-            &Row { depth: depth + 1, eye: Some(visible), icon: "canvas", label: &name, name: true, selected, dim: !visible, ..Default::default() },
+            &Row {
+                depth: depth + 1,
+                eye: Some(visible),
+                icon: "canvas",
+                label: &name,
+                name: true,
+                selected,
+                dim: !visible || !shown,
+                ..Default::default()
+            },
         );
         if r.eye {
             let _ = app.run("canvas.edit", json!({ "canvas": id, "visible": !visible }));
@@ -1336,7 +1340,7 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
                 row_key: format!("b:{}", b.name),
                 label: b.name.clone(),
                 icon: "body",
-                visible: app.session.body_visible(&b.name),
+                visible: !app.session.visibility.hidden_bodies.contains(&b.name),
                 selected: sel.iter().any(|x| matches!(x, Sel::Body { name } if *name == b.name)),
                 color: None,
                 locked: app.ui.locked_bodies.contains(&b.name),
@@ -1484,7 +1488,7 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
                 e.sel = Some(Sel::Body { name: body.world.clone() });
                 e.target = Some(Target::Body { name: body.world.clone() });
                 e.bodies = vec![body.world.clone()];
-                e.visible = app.session.body_visible(&body.world);
+                e.visible = !app.session.visibility.hidden_bodies.contains(&body.world);
                 e.selected = app.session.selection.contains(&Sel::Body { name: body.world.clone() });
                 e.row_key = format!("b:{}", body.world);
             } else {
@@ -1508,39 +1512,27 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         }
     }
     let open = is_open(app, &key, true);
-    // Everything under a hidden placement, or in the hidden Sketches folder, fades whatever its
-    // own eye says.
-    let parent_hidden = path.is_some_and(|p| !app.session.occurrence_visible(p)) || (folder == "sketches" && !app.ui.show_sketches);
-    let any_visible = if folder == "sketches" { app.ui.show_sketches } else { all.iter().any(|e| e.visible) };
+    // The folder's eye is its own: hiding it hides its items without changing theirs, and its
+    // items never change it. It and everything in it fade while it or a placement above is
+    // hidden, whatever their own eyes say.
+    let shown = !app.session.folder_hidden(&key);
+    let folder_faded = !shown || path.is_some_and(|p| !app.session.occurrence_visible(p));
     let r = draw_row(
         ui,
         ui.id().with(&key),
-        &Row {
-            depth,
-            fold: Some(open),
-            eye: Some(any_visible),
-            icon: "folder",
-            label: folder_label(folder),
-            dim: !any_visible || parent_hidden,
-            ..Default::default()
-        },
+        &Row { depth, fold: Some(open), eye: Some(shown), icon: "folder", label: folder_label(folder), dim: folder_faded, ..Default::default() },
     );
     if r.fold || r.clicked {
         toggle(app, &key, true);
     }
     if r.eye {
-        if folder == "sketches" {
-            app.ui.show_sketches = !app.ui.show_sketches;
-        } else {
-            let refs: Vec<&Entry> = all.iter().collect();
-            set_visible(app, folder, &refs, !any_visible);
-        }
+        toggle_folder(app, &key);
     }
     if r.hovered {
         acts.hover_bodies = all.iter().flat_map(|e| e.bodies.clone()).collect();
     }
     if let Some(p) = r.secondary {
-        acts.menu = Some((p, Target::Folder { component: comp, folder: fstatic.to_string() }));
+        acts.menu = Some((p, Target::Folder { component: comp, folder: fstatic.to_string(), scope: prefix.clone() }));
     }
     // Dropping on the folder row takes items out of their groups, to the end.
     if let Some(resp) = &r.resp
@@ -1556,7 +1548,8 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     for (g, items) in &groups {
         let gkey = format!("{prefix}/g{}", g.id);
         let gopen = is_open(app, &gkey, true);
-        let gvis = items.is_empty() || items.iter().any(|e| e.visible);
+        let gshown = !app.session.folder_hidden(&gkey);
+        let group_faded = folder_faded || !gshown;
         let label = format!("{} ({})", g.name, items.len());
         let r = draw_row(
             ui,
@@ -1564,11 +1557,11 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
             &Row {
                 depth: depth + 1,
                 fold: Some(gopen),
-                eye: Some(gvis),
+                eye: Some(gshown),
                 icon: "folder",
                 label: &label,
                 name: true,
-                dim: !gvis || parent_hidden,
+                dim: group_faded,
                 ..Default::default()
             },
         );
@@ -1576,14 +1569,13 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
             toggle(app, &gkey, true);
         }
         if r.eye {
-            let refs: Vec<&Entry> = items.iter().collect();
-            set_visible(app, folder, &refs, !gvis);
+            toggle_folder(app, &gkey);
         }
         if r.hovered {
             acts.hover_bodies = items.iter().flat_map(|e| e.bodies.clone()).collect();
         }
         if let Some(p) = r.secondary {
-            acts.menu = Some((p, Target::Group { id: g.id }));
+            acts.menu = Some((p, Target::Group { id: g.id, scope: prefix.clone() }));
         }
         if let Some(resp) = &r.resp
             && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == fstatic, DropMark::Box)
@@ -1592,12 +1584,12 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
         }
         if gopen {
             for e in items {
-                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &loose_keys, parent_hidden, acts);
+                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &loose_keys, group_faded, acts);
             }
         }
     }
     for e in &loose {
-        entry_row(app, ui, comp, path, fstatic, e, depth + 1, None, &loose_keys, parent_hidden, acts);
+        entry_row(app, ui, comp, path, fstatic, e, depth + 1, None, &loose_keys, folder_faded, acts);
     }
     let _ = t;
 }
