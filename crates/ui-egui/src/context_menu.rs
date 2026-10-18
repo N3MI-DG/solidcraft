@@ -995,7 +995,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             drop(app.run("inspect.section", json!({"clear": true})));
         }
         "ui.editSection" => app.start("inspect.section"),
-        "ui.sectionVisible" => crate::browser::set_section_visible(app, p.get("visible").and_then(Value::as_bool).unwrap_or(true)),
+        "ui.sectionVisible" => crate::browser::set_section_shown(app, p.get("visible").and_then(Value::as_bool).unwrap_or(true)),
         "ui.fit" => app.animate_view("fit"),
         "ui.home" => app.animate_view("home"),
         // One command for the whole selection: all fixed unless all already are.

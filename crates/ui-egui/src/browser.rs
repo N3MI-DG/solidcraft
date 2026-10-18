@@ -77,6 +77,10 @@ pub struct TreeState {
     /// A Section Analysis hidden with its eye in the Analysis folder: its plane (origin,
     /// normal), so the eye can bring it back (#822).
     pub hidden_section: Option<(solidcraft_engine::geom::Vec3, solidcraft_engine::geom::Vec3)>,
+    /// The Analysis folder hidden with its own eye, and the Section Analysis hidden with its
+    /// own: the section shows only while neither is, and each eye keeps its state.
+    pub analysis_hidden: bool,
+    pub section_hidden: bool,
     /// What waits for the Capture Position question: a command id, or [`SAVE`].
     pub capture_prompt: Option<String>,
     /// The last row clicked (for Shift ranges).
@@ -1020,25 +1024,31 @@ pub fn view_items(app: &SolveApp, name: &str) -> Vec<Item> {
 /// to hide and show it, a double-click to edit it and a menu to delete it (#822).
 fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut Actions) {
     if app.session.section.is_some() {
-        // A section made (or remade) while an older one was hidden replaces it.
+        // A section made (or remade) while an older one was hidden replaces it, shown.
         app.tree.hidden_section = None;
+        app.tree.analysis_hidden = false;
+        app.tree.section_hidden = false;
     }
-    let visible = app.session.section.is_some();
-    if !visible && app.tree.hidden_section.is_none() {
+    if app.session.section.is_none() && app.tree.hidden_section.is_none() {
+        app.tree.analysis_hidden = false;
+        app.tree.section_hidden = false;
         return;
     }
+    // Each eye is its own: the folder's never follows the section's, nor the other way round.
+    let (folder_shown, section_shown) = (!app.tree.analysis_hidden, !app.tree.section_hidden);
     let key = "analysis";
     let open = is_open(app, key, true);
     let r = draw_row(
         ui,
         ui.id().with(key),
-        &Row { depth, fold: Some(open), eye: Some(visible), icon: "folder", label: "Analysis", dim: !visible, ..Default::default() },
+        &Row { depth, fold: Some(open), eye: Some(folder_shown), icon: "folder", label: "Analysis", dim: !folder_shown, ..Default::default() },
     );
     if r.fold || r.clicked {
         toggle(app, key, true);
     }
     if r.eye {
-        set_section_visible(app, !visible);
+        app.tree.analysis_hidden = folder_shown;
+        sync_section(app);
     }
     if !open {
         return;
@@ -1046,10 +1056,17 @@ fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut
     let r = draw_row(
         ui,
         ui.id().with("section_analysis"),
-        &Row { depth: depth + 1, eye: Some(visible), icon: "section", label: "Section Analysis", dim: !visible, ..Default::default() },
+        &Row {
+            depth: depth + 1,
+            eye: Some(section_shown),
+            icon: "section",
+            label: "Section Analysis",
+            dim: !section_shown || !folder_shown,
+            ..Default::default()
+        },
     );
     if r.eye {
-        set_section_visible(app, !visible);
+        set_section_shown(app, !section_shown);
     }
     if r.double {
         app.start("inspect.section");
@@ -1057,6 +1074,19 @@ fn analysis_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &mut
     if let Some(p) = r.secondary {
         acts.menu = Some((p, Target::Section));
     }
+}
+
+/// Show or hide the Section Analysis itself (its eye): a hidden Analysis folder still keeps it
+/// off.
+pub fn set_section_shown(app: &mut SolveApp, shown: bool) {
+    app.tree.section_hidden = !shown;
+    sync_section(app);
+}
+
+/// The section is on while both the Analysis folder and the section itself are shown.
+fn sync_section(app: &mut SolveApp) {
+    let on = !app.tree.analysis_hidden && !app.tree.section_hidden;
+    set_section_visible(app, on);
 }
 
 /// Hide the Section Analysis (keeping its plane to show it again) or show the hidden one.
@@ -1077,7 +1107,7 @@ pub fn set_section_visible(app: &mut SolveApp, visible: bool) {
 
 /// The menu of the Section Analysis row.
 pub fn section_items(app: &SolveApp) -> Vec<Item> {
-    let visible = app.session.section.is_some();
+    let visible = !app.tree.section_hidden;
     vec![
         Item::action("ui.editSection", "Edit Section Analysis", "section"),
         Item::sep(),
