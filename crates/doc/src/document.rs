@@ -2383,6 +2383,12 @@ pub struct Visibility {
     /// Assembly joints by id: their glyphs are not drawn (they still constrain and move).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden_joints: Vec<u64>,
+    /// Browser folders and groups hidden themselves, by tree key: `<scope>/<folder>` or
+    /// `<scope>/g<group id>`, where the scope is `c0` (the design) or `o:<placement path>`
+    /// (`o:4/9/bodies`). Their items keep their own state: they are drawn again, as they were,
+    /// once the folder is shown.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_folders: Vec<String>,
 }
 
 impl Visibility {
@@ -2394,6 +2400,7 @@ impl Visibility {
             && self.hidden_sketches.is_empty()
             && self.shown_sketches.is_empty()
             && self.hidden_joints.is_empty()
+            && self.hidden_folders.is_empty()
     }
 }
 
