@@ -287,6 +287,19 @@ pub(crate) struct Row<'a> {
     pub(crate) radio: Option<bool>,
     /// Trailing badges: "lock", "pin".
     pub(crate) badges: &'a [&'a str],
+    /// Lit by the selection or the 3D view's pointer: the item's own row, or a row leading to it.
+    pub(crate) mark: Mark,
+}
+
+/// How a row relates to what the selection and the 3D view's pointer light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Mark {
+    #[default]
+    None,
+    /// A row a lit item is inside (its component, placement, folder or group): a faint bar.
+    Branch,
+    /// A lit item's own row: a solid bar, and the hover colour unless it is selected.
+    Here,
 }
 
 /// What happened on a row.
@@ -324,8 +337,18 @@ pub(crate) fn draw_row(ui: &mut egui::Ui, id: egui::Id, row: &Row) -> RowResp {
     let mut out = RowResp { rect: Some(r), hovered: resp.hovered() || dragged_over, ..Default::default() };
     if row.selected {
         ui.painter().rect_filled(r, 3.0, t.accent_soft);
-    } else if resp.hovered() {
+    } else if resp.hovered() || row.mark == Mark::Here {
         ui.painter().rect_filled(r, 3.0, t.hover);
+    }
+    // A lit item (selected, or under the pointer in the 3D view): a bar down the left of its row,
+    // and a fainter, thinner one on each row leading to it, so the bars trace its branch.
+    let bar = match row.mark {
+        Mark::None => None,
+        Mark::Branch => Some((2.0, t.accent.gamma_multiply(0.4))),
+        Mark::Here => Some((3.0, t.accent)),
+    };
+    if let Some((w, colour)) = bar {
+        ui.painter().rect_filled(Rect::from_min_size(r.left_top() + vec2(0.0, 2.0), vec2(w, r.height() - 4.0)), 1.0, colour);
     }
     let mut x = r.left() + 2.0 + row.depth as f32 * INDENT;
     let cy = r.center().y;
