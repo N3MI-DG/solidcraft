@@ -174,8 +174,8 @@ pub fn calibrated(axes: Axes, calibration: Option<Calibration>) -> Axes {
 }
 
 /// Hands one frame of 3D mouse input, `seconds` after the previous frame, to the page showing
-/// the camera. Nothing happens with navigation switched off, on the start page or while a file
-/// picker is open, or while the reading is inside the dead zone (after calibration, which takes
+/// the camera. Nothing happens with navigation switched off, on the start page, while a file
+/// picker is open or while another program has the focus, or while the reading is inside the dead zone (after calibration, which takes
 /// off the device's own rest offset), so a cap resting just off zero doesn't keep redrawing.
 /// Returns whether there was motion to hand over; it then asks for the next frame itself. The
 /// reading goes through the device's saved calibration first, when it has one; while the
@@ -192,8 +192,7 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
         app.space_mouse.calibrating = None;
     }
     let axes = calibrated(axes, calibration(app));
-    // Only the window with focus: with two windows open, the cap moves the one being used, not both.
-    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !axes.moving() || !ctx.input(|i| i.focused) {
+    if !app.preferences.space_mouse_enabled || app.home.open || app.file_picker_busy() || !axes.moving() || !window_focused(app, ctx) {
         return false;
     }
     let speed = f64::from(app.preferences.space_mouse_speed);
@@ -209,6 +208,14 @@ pub fn navigate_frame(app: &mut SolveApp, ctx: &egui::Context, mapping: DriverMa
     });
     ctx.request_repaint_after(Duration::from_millis(16));
     true
+}
+
+/// Whether one of SolidCraft's windows has the focus: the main window, or the popped-out agent
+/// chat. The desktop reads the device itself, whichever program has the focus, so without this
+/// the cap would turn the model while the user works in another program; with two SolidCraft
+/// windows open, it moves only the one being used, not both.
+fn window_focused(app: &SolveApp, ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.focused) || (app.preferences.agent_chat_popped && ctx.input_for(crate::agent_chat::window_viewport(), |i| i.focused))
 }
 
 /// A small dead zone avoids drift at rest. A full cap deflection takes roughly one viewport
@@ -398,6 +405,26 @@ mod tests {
         let motion = mapping.apply(Axes { translation: [350, 350, 350], rotation: [350; 3] });
         assert_eq!(motion.translation, [0.0, 0.0, 1.0]);
         assert_eq!(motion.rotation, [1.0; 3]);
+    }
+
+    /// The popped-out agent chat is a SolidCraft window too: while it has the focus, the cap
+    /// still moves the view behind it.
+    #[test]
+    fn the_cap_moves_the_view_while_the_popped_out_chat_has_the_focus() {
+        let ctx = window(false);
+        let chat = crate::agent_chat::window_viewport();
+        let mut raw = egui::RawInput { viewport_id: chat, focused: true, ..Default::default() };
+        raw.viewports.entry(chat).or_default().parent = Some(egui::ViewportId::ROOT);
+        let mut output = ctx.run_ui(raw, |_| {});
+        output.textures_delta.clear();
+        let mut app = app();
+        let before = app.cam;
+        app.preferences.agent_chat_popped = false;
+        assert!(!frame(&mut app, &ctx, DriverMapping::default(), PUSH, 0.02));
+        assert_eq!(app.cam, before);
+        app.preferences.agent_chat_popped = true;
+        assert!(frame(&mut app, &ctx, DriverMapping::default(), PUSH, 0.02));
+        assert!(app.cam.distance < before.distance);
     }
 
     #[test]
