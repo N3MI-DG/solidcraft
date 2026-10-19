@@ -510,6 +510,128 @@ struct Actions {
     menu: Option<(Pos2, Target)>,
     hover_bodies: Vec<String>,
     drop: Option<DropAction>,
+    /// What the selection and the 3D view's pointer light in the tree.
+    lit: Lit,
+}
+
+/// Something in the 3D view with a row in the tree.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Thing {
+    Body(String),
+    /// A sketch, by feature id.
+    Sketch(u64),
+    /// An origin or construction plane, by name.
+    Plane(String),
+    /// An origin axis.
+    Axis(String),
+}
+
+/// What the tree lights for the selection and the 3D view's pointer: each lit item's row (in
+/// the selection colour when selected, the hover colour when under the pointer, with a bar
+/// down its left), and a faint bar on each row leading to it.
+#[derive(Default)]
+struct Lit {
+    /// Selected, or part of something selected: a body for its faces, edges and vertices, a
+    /// sketch for its curves, points and profiles.
+    selected: std::collections::HashSet<Thing>,
+    /// Under the pointer in the 3D view.
+    hovered: Option<Thing>,
+    /// The placements holding a lit body, and the components holding a lit sketch or plane.
+    paths: Vec<Vec<u64>>,
+    components: Vec<u64>,
+}
+
+impl Lit {
+    fn of(app: &mut SolveApp) -> Lit {
+        use crate::viewport::Hit;
+        let mut selected = std::collections::HashSet::new();
+        for s in &app.session.selection {
+            selected.insert(match s {
+                Sel::Body { name } | Sel::Face { body: name, .. } | Sel::Edge { body: name, .. } | Sel::Vertex { body: name, .. } => {
+                    Thing::Body(name.clone())
+                }
+                Sel::Feature { id } => Thing::Sketch(*id),
+                Sel::Profile { sketch, .. } | Sel::ExternalSketchCurve { sketch, .. } | Sel::ExternalSketchPoint { sketch, .. } => {
+                    Thing::Sketch(*sketch)
+                }
+                Sel::SketchCurve { .. } | Sel::SketchPoint { .. } | Sel::SketchConstraint { .. } => match app.session.active_sketch {
+                    Some(id) => Thing::Sketch(id),
+                    None => continue,
+                },
+                Sel::Plane { name } => Thing::Plane(name.clone()),
+                Sel::Axis { name } => Thing::Axis(name.clone()),
+                Sel::Occurrence { .. } => continue,
+            });
+        }
+        let hovered = match &app.viewport.hover {
+            Some(Hit::Face { body, .. } | Hit::Edge { body, .. } | Hit::Vertex { body, .. }) => Some(Thing::Body(body.clone())),
+            Some(Hit::SketchPoint { sketch, .. } | Hit::SketchCurve { sketch, .. } | Hit::Profile { sketch, .. }) => Some(Thing::Sketch(*sketch)),
+            Some(Hit::Plane { name, .. }) => Some(Thing::Plane(name.clone())),
+            Some(Hit::Axis { name }) => Some(Thing::Axis(name.clone())),
+            None => None,
+        };
+        let doc = app.session.doc.clone();
+        let (mut paths, mut components) = (Vec::new(), Vec::new());
+        for thing in selected.iter().chain(&hovered) {
+            match thing {
+                Thing::Body(b) => {
+                    if let Some(path) = app.tree.model.as_mut().and_then(|model| model.body_path(&app.session, b)) {
+                        paths.push(path);
+                    }
+                }
+                Thing::Sketch(id) => {
+                    components.extend(doc.features.iter().find(|f| f.id == *id && matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.component))
+                }
+                Thing::Plane(name) => components.extend(
+                    doc.features.iter().find(|f| f.name == *name && matches!(f.kind, FeatureKind::ConstructionPlane { .. })).map(|f| f.component),
+                ),
+                Thing::Axis(_) => {}
+            }
+        }
+        Lit { selected, hovered, paths, components }
+    }
+
+    fn any(&self) -> bool {
+        !self.selected.is_empty() || self.hovered.is_some()
+    }
+
+    /// Whether `thing` is lit: (selected, under the pointer).
+    fn thing(&self, thing: &Thing) -> (bool, bool) {
+        (self.selected.contains(thing), self.hovered.as_ref() == Some(thing))
+    }
+
+    /// The things a folder entry stands for.
+    fn entry_things(folder: &str, e: &Entry) -> Vec<Thing> {
+        match folder {
+            "bodies" => e.bodies.iter().cloned().map(Thing::Body).collect(),
+            "sketches" => e.key.parse().ok().map(Thing::Sketch).into_iter().collect(),
+            _ => vec![Thing::Plane(e.label.clone())],
+        }
+    }
+
+    /// Whether a folder entry is lit: (selected, under the pointer). Its own `selected` (picked
+    /// in the tree, or the sketch being edited) counts as selected.
+    fn entry(&self, folder: &str, e: &Entry) -> (bool, bool) {
+        let things = Lit::entry_things(folder, e);
+        (e.selected || things.iter().any(|t| self.selected.contains(t)), things.iter().any(|t| self.hovered.as_ref() == Some(t)))
+    }
+
+    /// The mark of a row holding these entries: a faint bar when any of them is lit.
+    fn branch<'e>(&self, folder: &str, entries: impl IntoIterator<Item = &'e Entry>) -> Mark {
+        if entries.into_iter().any(|e| self.entry(folder, e) != (false, false)) { Mark::Branch } else { Mark::None }
+    }
+
+    /// The mark of a placement row: a faint bar when a lit body is placed in it or below it, or
+    /// a lit sketch or plane belongs to its component or one inside it.
+    fn placement(&self, doc: &solidcraft_engine::doc::Document, path: &[u64], component: u64) -> Mark {
+        let below = self.paths.iter().any(|p| p.starts_with(path)) || self.components.iter().any(|c| doc.component_within(*c, component));
+        if below { Mark::Branch } else { Mark::None }
+    }
+}
+
+/// A lit row's look: `(selected, under the pointer)` to the row's selection flag and mark.
+fn lit_row((selected, hovered): (bool, bool)) -> (bool, Mark) {
+    (selected, if selected || hovered { Mark::Here } else { Mark::None })
 }
 
 pub fn browser(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -701,6 +823,7 @@ fn browser_rows_hugging(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Action
 
 fn rows_scrolling(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, shrink_height: bool) {
     prepare_model(app);
+    acts.lit = Lit::of(app);
     egui::ScrollArea::vertical()
         .auto_shrink([false, shrink_height])
         .scroll_source(egui::scroll_area::ScrollSource { scroll_bar: true, mouse_wheel: true, ..egui::scroll_area::ScrollSource::NONE })
@@ -757,6 +880,8 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
         dim: faded,
         radio: Some(active),
         badges,
+        // The design holds everything the tree lists.
+        mark: if id == 0 && acts.lit.any() { Mark::Branch } else { Mark::None },
         ..Default::default()
     };
     let r = draw_row(ui, ui.id().with(("comp", id)), &row);
@@ -810,7 +935,7 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
     if id == 0 {
         doc_settings(app, ui, d);
         named_view_rows(app, ui, d, acts);
-        origin_rows(app, ui, d);
+        origin_rows(app, ui, d, acts);
         canvas_rows(app, ui, d, acts);
         analysis_rows(app, ui, d, acts);
     }
@@ -861,6 +986,7 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
             dim: faded || !visible,
             radio: Some(active),
             badges,
+            mark: acts.lit.placement(&app.session.doc, &path, placement.component),
             ..Default::default()
         },
     );
@@ -963,9 +1089,25 @@ fn doc_settings(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     }
 }
 
-fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
+/// The origin point, axes and planes, as `(key, icon, thing lit for it)`.
+fn origin_things() -> [(&'static str, &'static str, Option<Thing>); 7] {
+    let (axis, plane) = (|k: &str| Some(Thing::Axis(k.into())), |k: &str| Some(Thing::Plane(k.into())));
+    [
+        ("O", "point", None),
+        ("X", "axis", axis("X")),
+        ("Y", "axis", axis("Y")),
+        ("Z", "axis", axis("Z")),
+        ("XY", "plane", plane("XY")),
+        ("XZ", "plane", plane("XZ")),
+        ("YZ", "plane", plane("YZ")),
+    ]
+}
+
+fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize, acts: &Actions) {
     let key = "origin";
     let open = is_open(app, key, false);
+    let lit = |thing: &Option<Thing>| thing.as_ref().map_or((false, false), |t| acts.lit.thing(t));
+    let items = origin_things();
     let r = draw_row(
         ui,
         ui.id().with(key),
@@ -976,6 +1118,7 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
             icon: "origin",
             label: "Origin",
             dim: !app.ui.show_origin,
+            mark: if items.iter().any(|(_, _, thing)| lit(thing) != (false, false)) { Mark::Branch } else { Mark::None },
             ..Default::default()
         },
     );
@@ -991,28 +1134,20 @@ fn origin_rows(app: &mut SolveApp, ui: &mut egui::Ui, depth: usize) {
     if !open {
         return;
     }
-    let items = [
-        ("O", "point", "O"),
-        ("X", "axis", "X"),
-        ("Y", "axis", "Y"),
-        ("Z", "axis", "Z"),
-        ("XY", "plane", "XY"),
-        ("XZ", "plane", "XZ"),
-        ("YZ", "plane", "YZ"),
-    ];
-    for (k, icon, label) in items {
+    for (k, icon, thing) in items {
+        let label = k;
         let visible = !app.session.visibility.hidden_origin.iter().any(|h| h == k);
         let sel = match icon {
             "plane" => Some(Sel::Plane { name: k.into() }),
             "axis" => Some(Sel::Axis { name: k.into() }),
             _ => None,
         };
-        let selected = sel.as_ref().is_some_and(|x| app.session.selection.contains(x));
+        let (selected, mark) = lit_row(lit(&thing));
         let r = draw_row(
             ui,
             ui.id().with(("o", k)),
             // Faded when hidden itself or with the whole Origin.
-            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !visible || !app.ui.show_origin, ..Default::default() },
+            &Row { depth: depth + 1, eye: Some(visible), icon, label, selected, dim: !visible || !app.ui.show_origin, mark, ..Default::default() },
         );
         if r.eye {
             if visible {
@@ -1639,7 +1774,16 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     let r = draw_row(
         ui,
         ui.id().with(&key),
-        &Row { depth, fold: Some(open), eye: Some(shown), icon: "folder", label: folder_label(folder), dim: folder_faded, ..Default::default() },
+        &Row {
+            depth,
+            fold: Some(open),
+            eye: Some(shown),
+            icon: "folder",
+            label: folder_label(folder),
+            dim: folder_faded,
+            mark: acts.lit.branch(folder, &all),
+            ..Default::default()
+        },
     );
     if r.fold || r.clicked {
         toggle(app, &key, true);
@@ -1681,6 +1825,7 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
                 label: &label,
                 name: true,
                 dim: group_faded,
+                mark: acts.lit.branch(folder, items),
                 ..Default::default()
             },
         );
@@ -1735,6 +1880,7 @@ fn entry_row(
     let pattern_key = format!("{}/patterns", e.row_key);
     let patterns_open = is_open(app, &pattern_key, true);
     let badges: &[&str] = if e.locked { &["lock"] } else { &[] };
+    let (selected, mark) = lit_row(acts.lit.entry(folder, e));
     let r = draw_row(
         ui,
         ui.id().with(("item", &e.row_key)),
@@ -1745,10 +1891,11 @@ fn entry_row(
             icon: e.icon,
             label: &e.label,
             name: true,
-            selected: e.selected,
+            selected,
             dim: !e.visible || parent_hidden,
             color: e.color,
             badges,
+            mark,
             ..Default::default()
         },
     );
