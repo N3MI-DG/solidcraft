@@ -846,6 +846,7 @@ fn rows_scrolling(app: &mut SolveApp, ui: &mut egui::Ui, acts: &mut Actions, shr
 }
 
 fn finish_browser(app: &mut SolveApp, ui: &mut egui::Ui, acts: Actions) {
+    drag_label(ui.ctx());
     app.viewport.hover_bodies = acts.hover_bodies;
     if let Some(d) = acts.drop {
         apply_drop(app, d);
@@ -941,9 +942,9 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
     }
     // Bodies and sketches dropped on a component move into it.
     if let Some(resp) = &r.resp
-        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp != id && d.folder != "construction", DropMark::Box)
+        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.moves_into(id, None), DropMark::Box)
     {
-        acts.drop = Some(DropAction::Component { to: id, folder: d.folder, keys: d.keys.clone() });
+        acts.drop = Some(DropAction::Component { to: id, to_path: Vec::new(), keys: d.keys.clone(), group: None });
     }
     if !open {
         return;
@@ -1056,9 +1057,9 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
         acts.menu = Some((p, Target::Occurrence { path: path.clone() }));
     }
     if let Some(resp) = &r.resp
-        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp != placement.component && d.folder != "construction", DropMark::Box)
+        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.moves_into(placement.component, None), DropMark::Box)
     {
-        acts.drop = Some(DropAction::Component { to: placement.component, folder: d.folder, keys: d.keys.clone() });
+        acts.drop = Some(DropAction::Component { to: placement.component, to_path: path.clone(), keys: d.keys.clone(), group: None });
     }
     if !open {
         return;
@@ -1599,6 +1600,17 @@ struct Drag {
     comp: u64,
     folder: &'static str,
     keys: Vec<String>,
+    /// Shown beside the pointer while dragging: the item's name, or how many items.
+    label: String,
+}
+
+impl Drag {
+    /// Whether dropping it in component `to`'s `folder` moves it there: bodies from another
+    /// component (`None`: a component or placement row). Sketches and construction planes stay
+    /// in their component, whose coordinates they are drawn in.
+    fn moves_into(&self, to: u64, folder: Option<&str>) -> bool {
+        self.folder == "bodies" && self.comp != to && folder.is_none_or(|f| f == self.folder)
+    }
 }
 
 /// The items of a component folder, in model order.
@@ -1820,11 +1832,16 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
     if let Some(p) = r.secondary {
         acts.menu = Some((p, Target::Folder { component: comp, folder: fstatic.to_string(), scope: prefix.clone() }));
     }
-    // Dropping on the folder row takes items out of their groups, to the end.
+    // Dropping on the folder row takes items out of their groups, to the end; bodies of another
+    // component move into this component.
     if let Some(resp) = &r.resp
-        && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == fstatic, DropMark::Box)
+        && let Some(d) = drop_target(ui, resp, |d: &Drag| (d.comp == comp && d.folder == fstatic) || d.moves_into(comp, Some(fstatic)), DropMark::Box)
     {
-        acts.drop = Some(DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), group: None, before: None });
+        acts.drop = Some(if d.comp == comp {
+            DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), group: None, before: None }
+        } else {
+            DropAction::Component { to: comp, to_path: path.map(<[u64]>::to_vec).unwrap_or_default(), keys: d.keys.clone(), group: None }
+        });
     }
     if !open {
         return;
@@ -1865,13 +1882,19 @@ fn folder_rows_at(app: &mut SolveApp, ui: &mut egui::Ui, comp: u64, path: Option
             acts.menu = Some((p, Target::Group { id: g.id, scope: prefix.clone() }));
         }
         if let Some(resp) = &r.resp
-            && let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == fstatic, DropMark::Box)
+            && let Some(d) =
+                drop_target(ui, resp, |d: &Drag| (d.comp == comp && d.folder == fstatic) || d.moves_into(comp, Some(fstatic)), DropMark::Box)
         {
-            acts.drop = Some(DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), group: Some(g.id), before: None });
+            acts.drop = Some(if d.comp == comp {
+                DropAction::Move { comp, folder: fstatic, keys: d.keys.clone(), group: Some(g.id), before: None }
+            } else {
+                DropAction::Component { to: comp, to_path: path.map(<[u64]>::to_vec).unwrap_or_default(), keys: d.keys.clone(), group: Some(g.id) }
+            });
         }
         if gopen {
             for e in items {
-                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &loose_keys, group_faded, acts);
+                let group_keys: Vec<String> = items.iter().map(|e| e.key.clone()).collect();
+                entry_row(app, ui, comp, path, fstatic, e, depth + 2, Some(g.id), &group_keys, group_faded, acts);
             }
         }
     }
@@ -1892,7 +1915,8 @@ fn entry_row(
     e: &Entry,
     depth: usize,
     group: Option<u64>,
-    loose: &[String],
+    // The keys of the list the row is in: its group's items, or the folder's loose items.
+    siblings: &[String],
     // A placement or folder above is hidden: the row fades, its eye stays its own.
     parent_hidden: bool,
     acts: &mut Actions,
@@ -1971,14 +1995,35 @@ fn entry_row(
     // Drag: the selected items of this folder when this one is selected, else just this one.
     if resp.drag_started() && !r.on_control {
         let keys: Vec<String> = if e.selected { selected_keys(app, comp, folder) } else { vec![e.key.clone()] };
-        resp.dnd_set_drag_payload(Drag { comp, folder, keys });
+        let label = if keys.len() == 1 { e.label.clone() } else { format!("{} items", keys.len()) };
+        resp.dnd_set_drag_payload(Drag { comp, folder, keys, label });
     }
-    if let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == folder && !d.keys.contains(&e.key), DropMark::Above) {
+    // Items of this folder reorder before the row (dropped on its upper half) or after it (its
+    // lower half, so the last place in a list can be reached); bodies of another component move
+    // into this component (and this row's group).
+    let from_elsewhere = egui::DragAndDrop::payload::<Drag>(ui.ctx()).is_some_and(|d| d.moves_into(comp, Some(folder)));
+    if from_elsewhere {
+        if let Some(d) = drop_target(ui, resp, |d: &Drag| d.moves_into(comp, Some(folder)), DropMark::Box) {
+            acts.drop = Some(DropAction::Component { to: comp, to_path: path.map(<[u64]>::to_vec).unwrap_or_default(), keys: d.keys.clone(), group });
+        }
+        return;
+    }
+    let after = ui.input(|i| i.pointer.latest_pos()).is_some_and(|p| p.y > resp.rect.center().y);
+    let mark = if after { DropMark::Below } else { DropMark::Above };
+    if let Some(d) = drop_target(ui, resp, |d: &Drag| d.comp == comp && d.folder == folder && !d.keys.contains(&e.key), mark) {
         acts.drop = Some(match group {
-            Some(g) => DropAction::Move { comp, folder, keys: d.keys.clone(), group: Some(g), before: Some(e.key.clone()) },
+            Some(g) => {
+                // After the row is before the next item not being dragged, or the group's end.
+                let before = if after {
+                    siblings.iter().skip_while(|k| **k != e.key).skip(1).find(|k| !d.keys.contains(k)).cloned()
+                } else {
+                    Some(e.key.clone())
+                };
+                DropAction::Move { comp, folder, keys: d.keys.clone(), group: Some(g), before }
+            }
             None => {
-                let mut order: Vec<String> = loose.iter().filter(|k| !d.keys.contains(k)).cloned().collect();
-                let at = order.iter().position(|k| *k == e.key).unwrap_or(order.len());
+                let mut order: Vec<String> = siblings.iter().filter(|k| !d.keys.contains(k)).cloned().collect();
+                let at = order.iter().position(|k| *k == e.key).map_or(order.len(), |i| i + usize::from(after));
                 for (i, k) in d.keys.iter().enumerate() {
                     order.insert(at + i, k.clone());
                 }
@@ -1997,6 +2042,8 @@ fn selected_keys(app: &SolveApp, comp: u64, folder: &str) -> Vec<String> {
 enum DropMark {
     /// A line above the row: the items go before it.
     Above,
+    /// A line below the row: the items go after it.
+    Below,
     /// A box around the row: the items go into it.
     Box,
 }
@@ -2009,6 +2056,7 @@ fn drop_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag) -> b
         let r = resp.rect;
         match mark {
             DropMark::Above => ui.painter().hline(r.x_range(), r.top(), Stroke::new(2.0, t.accent)),
+            DropMark::Below => ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(2.0, t.accent)),
             DropMark::Box => ui.painter().rect_stroke(r.shrink(0.5), 3.0, Stroke::new(1.5, t.accent), egui::StrokeKind::Inside),
         };
     }
@@ -2019,14 +2067,28 @@ fn drop_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag) -> b
     resp.dnd_release_payload::<Drag>().filter(|d| accept(d))
 }
 
+/// While tree items are dragged, their name follows the pointer, so the drag shows before the
+/// pointer reaches a row that takes it.
+fn drag_label(ctx: &egui::Context) {
+    let (Some(d), Some(p)) = (egui::DragAndDrop::payload::<Drag>(ctx), ctx.input(|i| i.pointer.latest_pos())) else { return };
+    let t = Tokens::get();
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_browser_drag")));
+    let galley = painter.layout_no_wrap(d.label.clone(), FontId::proportional(12.5), t.text);
+    let r = Rect::from_min_size(p + vec2(14.0, 6.0), galley.size() + vec2(12.0, 6.0));
+    painter.rect(r, 3.0, t.panel, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    painter.galley(r.min + vec2(6.0, 3.0), galley, t.text);
+}
+
 /// A drop, applied after the tree is drawn.
 enum DropAction {
     /// Into a group (before an item of it), or out of groups.
     Move { comp: u64, folder: &'static str, keys: Vec<String>, group: Option<u64>, before: Option<String> },
     /// Out of groups, in this order of the folder's loose items.
     Order { comp: u64, folder: &'static str, keys: Vec<String>, order: Vec<String> },
-    /// Into another component (bodies and sketches).
-    Component { to: u64, folder: &'static str, keys: Vec<String> },
+    /// Bodies into another component, placed by its placement `to_path` (the row dropped on: a
+    /// component placed more than once gets them in every instance), and into a group of its
+    /// Bodies folder when dropped on one.
+    Component { to: u64, to_path: Vec<u64>, keys: Vec<String>, group: Option<u64> },
 }
 
 fn apply_drop(app: &mut SolveApp, d: DropAction) {
@@ -2038,12 +2100,16 @@ fn apply_drop(app: &mut SolveApp, d: DropAction) {
             let _ = app.run("browser.move", json!({ "component": comp, "folder": folder, "items": keys }));
             let _ = app.run("browser.order", json!({ "component": comp, "folder": folder, "order": order }));
         }
-        DropAction::Component { to, folder, keys } => {
-            let _ = match folder {
-                "bodies" => app.run("component.move_bodies", json!({ "bodies": keys, "component": to })),
-                "sketches" => app.run("component.move_sketches", json!({ "sketches": keys, "component": to })),
-                _ => Ok(serde_json::Value::Null),
+        DropAction::Component { to, to_path, keys, group } => {
+            let moved = app.run("component.move_bodies", json!({ "bodies": keys, "component": to, "component_path": to_path }));
+            let grouped = match (moved, group) {
+                (Ok(_), Some(g)) => app.run("browser.move", json!({ "component": to, "folder": "bodies", "items": keys, "group": g })),
+                (moved, _) => moved,
             };
+            // A drop that can't be done says why, rather than nothing happening.
+            if let Err(e) = grouped {
+                app.set_status(e.to_string(), true);
+            }
         }
     }
 }
