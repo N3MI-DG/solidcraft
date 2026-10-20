@@ -20,6 +20,19 @@ pub(super) fn parent_path(p: &Value, cmd: &str) -> Result<Option<Vec<u64>>> {
         .ok_or_else(|| bad(cmd, "`parent_path` must list 0..64 occurrence ids"))
 }
 
+/// The transform a copy of the placement at `path` takes in `parent` to sit where the placement
+/// is in the world, then moved by `translate` (in the world). The parent is placed by
+/// [`placement_of`]: in its other instances the copy sits in the same place within them.
+pub(super) fn in_place(s: &Session, path: &[u64], parent: u64, parent_path: Option<&[u64]>, translate: Vec3, cmd: &str) -> Result<Mat> {
+    let doc = s.placed_document();
+    let component =
+        path.last().and_then(|id| doc.occurrences.iter().find(|o| o.id == *id)).map(|o| o.component).ok_or_else(|| bad(cmd, "no placement"))?;
+    let world = doc.path_transform(component, path).ok_or_else(|| bad(cmd, "that placement is gone"))?;
+    let (_, frame) = placement_of(s, &doc, parent, parent_path, cmd)?;
+    let inverse = solidcraft_doc::mat_inverse(&frame).ok_or_else(|| bad(cmd, "the parent's frame is not invertible"))?;
+    Ok(solidcraft_doc::mat_mul(&inverse, &solidcraft_doc::mat_mul(&translation(translate), &world)))
+}
+
 /// The placement of `component` a move or paste is placed by (the design is the empty path): its
 /// path and world frame. `path` when given (it must lead to `component`), else its only
 /// placement, else the active placement when that is one of it.
