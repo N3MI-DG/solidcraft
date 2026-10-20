@@ -17,6 +17,8 @@ pub(super) mod matrix;
 pub(super) mod placing;
 #[path = "component_properties.rs"]
 pub(super) mod properties;
+#[path = "component_reparent.rs"]
+mod reparent;
 #[path = "component_transfer.rs"]
 mod transfer;
 
@@ -67,6 +69,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("occurrence.move", "Move Occurrence", move_occurrence).icon("move")
         .params("occurrence; path?: exact placement; space?: local|world (default local); translate?: [x,y,z]; axis?: [x,y,z], angle?: radians or \"30 deg\", origin?: [x,y,z]; matrix?: [12 or 16 numbers] (instead of translate/axis/angle/origin: a rigid move as a row-major 3x4 rotation-and-translation or 4x4 matrix, flat or as rows; one that is a rotation only up to rounding is orthonormalised, a scale, shear or mirror is refused); tolerance?: largest accepted |RᵀR − I| (default 1e-9, at most 1e-3); capture?: bool (default true; false keeps it pending until Capture Position). Nested occurrence definitions remain shared"),
     CommandSpec::new("occurrence.ground", "Ground", ground).icon("ground").params("occurrence; grounded?: bool (default toggles)"),
+    CommandSpec::new("occurrence.reparent", "Move to Component", reparent::reparent).icon("move").params(
+        "occurrence; path?: exact placement; parent: component id or name (0 or \"root\" for the design); parent_path?: the parent's \
+         placement to place it by (default: its only one, else the active one; every instance of the parent gets it). The placement \
+         keeps its world position; a move that would break a feature is refused",
+    ),
     CommandSpec::new("component.capture_position", "Capture Position", capture).at("SOLID", "POSITION").icon("capture").params("keeps pending occurrence moves"),
     CommandSpec::new("component.revert_position", "Revert Position", revert).at("SOLID", "POSITION").icon("revert").noundo().params("occurrences?: [ids] (default all); drops selected pending occurrence moves"),
 ];
