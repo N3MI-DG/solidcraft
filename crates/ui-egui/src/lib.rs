@@ -429,6 +429,9 @@ pub struct SolveApp {
     pub last_command: Option<(String, String)>,
     /// Bodies copied with Copy (by name), pasted into the active component by Paste.
     pub copied_bodies: Vec<String>,
+    /// Text a copy left for the system clipboard, written on the next frame (so a paste event
+    /// follows: the window system sends one only while the clipboard holds text).
+    pub(crate) clipboard_text: Option<String>,
     /// Component placements copied with Copy (by path): Paste places new instances of them in
     /// the active component, Paste New (Ctrl+Shift+V) independent copies.
     pub copied_placements: Vec<Vec<u64>>,
@@ -573,6 +576,7 @@ impl SolveApp {
             apply_gate: None,
             last_command: None,
             copied_bodies: Vec::new(),
+            clipboard_text: None,
             copied_placements: Vec::new(),
             cut_bodies: Vec::new(),
             cut_placements: Vec::new(),

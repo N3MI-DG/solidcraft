@@ -17,21 +17,15 @@
 //! text on the system clipboard (a menu's Copy leaves it for the next frame, which has the
 //! context to write it).
 
-use std::sync::Mutex;
-
 use egui::Pos2;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 
 use crate::SolveApp;
 
-/// Text for the system clipboard, written on the next frame.
-static PENDING_TEXT: Mutex<Option<String>> = Mutex::new(None);
-
-fn leave_text(text: String) {
-    if let Ok(mut pending) = PENDING_TEXT.lock() {
-        *pending = Some(text);
-    }
+/// Leave text for the system clipboard: this app's next frame writes it ([`flush`]).
+fn leave_text(app: &mut SolveApp, text: String) {
+    app.clipboard_text = Some(text);
 }
 
 /// The selected sketch geometry of the active sketch.
@@ -199,7 +193,7 @@ pub fn copy_design(app: &mut SolveApp) -> bool {
     };
     replace_clipboard(app);
     app.linked_design_clipboard = Some(path);
-    leave_text(format!("SolidCraft linked design: {}", app.session.doc.name));
+    leave_text(app, format!("SolidCraft linked design: {}", app.session.doc.name));
     app.set_status("Copied design: switch to the assembly and paste to insert a linked component", false);
     true
 }
@@ -221,7 +215,7 @@ pub fn copy(app: &mut SolveApp) -> bool {
         let k = out.get("constraints").and_then(Value::as_u64).unwrap_or(0);
         let text = format!("SolidCraft sketch geometry: {n} entities, {k} constraints and dimensions");
         app.set_status(format!("Copied {n} sketch entities with {k} constraints and dimensions"), false);
-        leave_text(text);
+        leave_text(app, text);
         return true;
     }
     let features = crate::timeline::selected_feature_ids(app);
@@ -234,7 +228,7 @@ pub fn copy(app: &mut SolveApp) -> bool {
         replace_clipboard(app);
         let names: Vec<String> = placements.iter().filter_map(|p| app.session.occurrence_placement(p).ok()).map(|p| p.name).collect();
         app.set_status(format!("Copied {} (Ctrl+V pastes an instance, Ctrl+Shift+V a new copy)", names.join(", ")), false);
-        leave_text(format!("SolidCraft components: {}", names.join(", ")));
+        leave_text(app, format!("SolidCraft components: {}", names.join(", ")));
         app.copied_placements = placements;
         return true;
     }
@@ -243,7 +237,7 @@ pub fn copy(app: &mut SolveApp) -> bool {
         app.session.clipboard.clear();
         replace_clipboard(app);
         app.set_status(format!("Copied {}", bodies.join(", ")), false);
-        leave_text(format!("SolidCraft bodies: {}", bodies.join(", ")));
+        leave_text(app, format!("SolidCraft bodies: {}", bodies.join(", ")));
         app.copied_bodies = bodies;
         return true;
     }
@@ -254,7 +248,7 @@ pub fn copy(app: &mut SolveApp) -> bool {
     replace_clipboard(app);
     let names: Vec<&str> = out.get("copied").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     app.set_status(format!("Copied {}", names.join(", ")), false);
-    leave_text(format!("SolidCraft features: {}", names.join(", ")));
+    leave_text(app, format!("SolidCraft features: {}", names.join(", ")));
     true
 }
 
@@ -308,7 +302,7 @@ pub fn cut(app: &mut SolveApp) -> bool {
             clear_clipboard(app);
             let names: Vec<String> = placements.iter().filter_map(|p| app.session.occurrence_placement(p).ok()).map(|p| p.name).collect();
             app.set_status(format!("Cut {}: paste to move it into a component (Esc leaves it)", names.join(", ")), false);
-            leave_text(format!("SolidCraft components: {}", names.join(", ")));
+            leave_text(app, format!("SolidCraft components: {}", names.join(", ")));
             app.cut_placements = placements;
             return true;
         }
@@ -318,7 +312,7 @@ pub fn cut(app: &mut SolveApp) -> bool {
         }
         clear_clipboard(app);
         app.set_status(format!("Cut {}: paste to move it into a component (Esc leaves it)", bodies.join(", ")), false);
-        leave_text(format!("SolidCraft bodies: {}", bodies.join(", ")));
+        leave_text(app, format!("SolidCraft bodies: {}", bodies.join(", ")));
         app.cut_bodies = bodies;
         return true;
     }
@@ -330,7 +324,7 @@ pub fn cut(app: &mut SolveApp) -> bool {
     replace_clipboard(app);
     let n = out.get("curves").and_then(Value::as_u64).unwrap_or(0) + out.get("points").and_then(Value::as_u64).unwrap_or(0);
     app.set_status(format!("Cut {n} sketch entities"), false);
-    leave_text(format!("SolidCraft sketch geometry: {n} entities"));
+    leave_text(app, format!("SolidCraft sketch geometry: {n} entities"));
     true
 }
 
@@ -587,12 +581,12 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context) {
     if pastes > 0 {
         paste_as(app, pointer, shift);
     }
-    flush(ctx);
+    flush(app, ctx);
 }
 
 /// Write clipboard text a copy left.
-pub fn flush(ctx: &egui::Context) {
-    if let Some(text) = PENDING_TEXT.lock().ok().and_then(|mut p| p.take()) {
+pub fn flush(app: &mut SolveApp, ctx: &egui::Context) {
+    if let Some(text) = app.clipboard_text.take() {
         ctx.copy_text(text);
     }
 }
