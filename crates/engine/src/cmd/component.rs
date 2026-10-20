@@ -54,13 +54,14 @@ pub static COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::new("component.move_bodies", "Move Bodies to Component", move_bodies).icon("move").params(
         "bodies: [names], component; component_path?: its placement to place them by (default: its only one, else the active \
-         one; a component placed more than once gets them in every instance). A body of a component placed more than once moves \
-         from its first placement, where it has its own name",
+         one; a component placed more than once gets them in every instance); from_path?: the placement of their component they \
+         move from (default: its only one, else its first, where its bodies have their own names)",
     ),
     CommandSpec::new("component.copy_bodies", "Paste Bodies", copy_bodies).icon("paste").params(
-        "bodies: [names]; component?: where the copies go (default: the active one); component_path?: its placement to place \
-         them by (default: its only one, else the active one; a component placed more than once gets them in every instance). \
-         Each copy stays where its body is in the world; the copies' names come back as `bodies`",
+        "bodies: [names, as the Browser shows them: a body seen in another placement of its component (`Cube (B:2)`) is copied \
+         from there]; component?: where the copies go (default: the active one); component_path?: its placement to place them \
+         by (default: its only one, else the active one; a component placed more than once gets them in every instance). Each \
+         copy stays where its body is in the world; the copies' names come back as `bodies`",
     ),
     CommandSpec::new("component.move_sketches", "Move Sketches to Component", move_sketches).icon("move").params("sketches: [ids or names], component"),
     CommandSpec::new("occurrence.copy", "Paste (Instance)", copy_occurrence).icon("copy")
@@ -315,15 +316,24 @@ fn copy_bodies(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`bodies` must list 1…1000 bodies"));
     }
     let state = s.model.state();
-    let mut by_component: std::collections::BTreeMap<u64, Vec<String>> = std::collections::BTreeMap::new();
+    // Bodies by their component, and the placement they are copied as: a body is named as its
+    // component's first placement shows it, and one seen in another placement (`Cube (B:2)`) is
+    // that body, copied from where that placement shows it.
+    let mut groups: std::collections::BTreeMap<(u64, Option<Vec<u64>>), Vec<String>> = std::collections::BTreeMap::new();
+    let mut placed_bodies = None;
     for name in &names {
-        let body = state.body(name).ok_or_else(|| bad(cmd, format!("no body `{name}` (copy a placed copy's body from its component)")))?;
-        by_component.entry(s.doc.model_body_component(body)).or_default().push(name.clone());
+        if let Some(body) = state.body(name) {
+            groups.entry((s.doc.model_body_component(body), None)).or_default().push(name.clone());
+            continue;
+        }
+        let placed = placed_bodies.get_or_insert_with(|| s.doc.body_frames_with_source(&state));
+        let (_, source, component, path, _) = placed.iter().find(|(shown, ..)| shown == name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
+        groups.entry((*component, Some(path.clone()))).or_default().push(source.clone());
     }
     drop(state);
     let mut scratch = s.scratch();
     let mut copies = Vec::new();
-    for (from, bodies) in by_component {
+    for ((from, from_path), bodies) in groups {
         // The copy is made where its body is, so it starts out in the same place.
         scratch.active_component = from;
         scratch.active_occurrence_path = None;
@@ -348,6 +358,9 @@ fn copy_bodies(s: &mut Session, p: &Value) -> Result<Value> {
             let mut moved = json!({"bodies": made, "component": to});
             if let Some(path) = p.get("component_path") {
                 moved["component_path"] = path.clone();
+            }
+            if let Some(path) = from_path {
+                moved["from_path"] = json!(path);
             }
             transfer::move_bodies(&mut scratch, &moved)?;
         }

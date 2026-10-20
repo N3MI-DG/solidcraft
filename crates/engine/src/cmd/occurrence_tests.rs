@@ -1003,3 +1003,23 @@ fn pasted_and_moved_things_survive_reopening() {
     assert_eq!(reopened.doc.model_body_component(state.body("Cube (2)").unwrap()), a);
     assert_eq!(reopened.doc.occurrences.iter().find(|o| o.id == b_at).unwrap().parent, a);
 }
+
+/// A body seen in another placement of its component (`Cube (B:2)`) copies from there: the copy
+/// is of that body, named after it, and sits where that placement shows it.
+#[test]
+fn a_body_seen_in_another_placement_copies_from_there() {
+    let mut s = Session::default();
+    let (b, _) = created(&mut s, "B");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "body_name": "Cube"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let second = run(&mut s, "occurrence.copy", json!({"component": b, "translate": [0,100,0]}))["occurrence"].as_u64().unwrap();
+    let shown = s.occurrence_placement(&[second]).unwrap().bodies[0].world.clone();
+    assert_ne!(shown, "Cube");
+    let out = run(&mut s, "component.copy_bodies", json!({"bodies": [shown.clone()], "component": 0}));
+    assert_eq!(out["bodies"], json!(["Cube (2)"]));
+    let world = s.world_state();
+    let (seen, copy) = (world.body(&shown).unwrap().mesh().bounds(), world.body("Cube (2)").unwrap().mesh().bounds());
+    assert!(seen.min.dist(copy.min) < 1e-6 && seen.max.dist(copy.max) < 1e-6, "{seen:?} vs {copy:?}");
+    let state = s.model.state();
+    assert_eq!(s.doc.model_body_component(state.body("Cube (2)").unwrap()), 0);
+}

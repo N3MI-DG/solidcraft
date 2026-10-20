@@ -132,15 +132,16 @@ pub(super) fn from_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"components":made}))
 }
 
-/// The `component_path` parameter: the target component's placement to place by.
-fn component_path(p: &Value, cmd: &str) -> Result<Option<Vec<u64>>> {
-    let Some(value) = p.get("component_path") else { return Ok(None) };
+/// A placement path parameter (`component_path`: the target's placement to place by,
+/// `from_path`: the source's placement to move from).
+fn path_param(p: &Value, key: &str, cmd: &str) -> Result<Option<Vec<u64>>> {
+    let Some(value) = p.get(key) else { return Ok(None) };
     value
         .as_array()
         .filter(|a| a.len() <= 64)
         .and_then(|a| a.iter().map(Value::as_u64).collect::<Option<Vec<_>>>())
         .map(Some)
-        .ok_or_else(|| bad(cmd, "`component_path` must list 0..64 occurrence ids"))
+        .ok_or_else(|| bad(cmd, format!("`{key}` must list 0..64 occurrence ids")))
 }
 
 pub(super) fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
@@ -161,10 +162,23 @@ fn move_at_boundary(s: &mut Session, p: &Value, allow_boundary: bool) -> Result<
     let mut frames = unique_frames(&scratch, cmd)?;
     // The target is placed by `component_path`, else its only placement, else the active one: a
     // component placed more than once gets the bodies in every instance, placed by that one.
-    let given = component_path(p, cmd)?;
+    let given = path_param(p, "component_path", cmd)?;
     if given.is_some() || frames.get(&to).is_some_and(Option::is_none) {
         let placed = super::placing::placement_of(&scratch, &scratch.placed_document(), to, given.as_deref(), cmd)?;
         frames.insert(to, Some(placed));
+    }
+    // The bodies move from the placement named (`from_path`: one of several where their component
+    // is placed), as that placement shows them.
+    if let Some(path) = path_param(p, "from_path", cmd)? {
+        let placed = scratch.placed_document();
+        let component = path
+            .last()
+            .and_then(|id| placed.occurrences.iter().find(|o| o.id == *id))
+            .map(|o| o.component)
+            .ok_or_else(|| bad(cmd, "`from_path` is no placement"))?;
+        let frame = placed.path_transform(component, &path).ok_or_else(|| bad(cmd, "`from_path` is no placement"))?;
+        drop(placed);
+        frames.insert(component, Some((path, frame)));
     }
     let mut features = Vec::new();
     for name in &bodies {
