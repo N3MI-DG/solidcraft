@@ -663,13 +663,67 @@ fn matrix_move_orthonormalises_rounding_and_refuses_what_is_not_rigid() {
     run(&mut s, "occurrence.move", json!({"occurrence": occ, "matrix": rounded, "tolerance": 1e-3}));
 }
 
+/// A nested placement moves out to the design and back in, staying where it is in the world, and
+/// the session's paths to it (selection, hidden placements) follow it.
+#[test]
+fn reparent_keeps_the_world_position_and_follows_paths() {
+    let mut s = Session::default();
+    let (parent_component, parent) = created(&mut s, "Parent");
+    run(&mut s, "occurrence.move", json!({"occurrence": parent, "translate": [100,0,0], "axis": [0,0,1], "angle": "90 deg"}));
+    let (_, child) = created(&mut s, "Child");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2}));
+    let centre =
+        |s: &mut Session, path: Value| run(s, "occurrence.properties", json!({"occurrence": child, "path": path}))["total"]["center_of_mass"].clone();
+    let before = centre(&mut s, json!([parent, child]));
+    run(&mut s, "select.set", json!({"items": [{"type": "occurrence", "path": [parent, child]}]}));
+    s.visibility.hidden_occurrences.push(vec![parent, child]);
+
+    let out = run(&mut s, "occurrence.reparent", json!({"occurrence": child, "parent": "root"}));
+    assert_eq!(out["path"], json!([child]));
+    assert_eq!(s.doc.occurrences.iter().find(|o| o.id == child).unwrap().parent, 0);
+    let after = centre(&mut s, json!([child]));
+    for i in 0..3 {
+        near(&after[i], before[i].as_f64().unwrap());
+    }
+    assert_eq!(s.selection, vec![crate::Sel::Occurrence { path: vec![child] }]);
+    assert_eq!(s.visibility.hidden_occurrences, vec![vec![child]]);
+
+    run(&mut s, "occurrence.reparent", json!({"occurrence": child, "parent": parent_component}));
+    let back = centre(&mut s, json!([parent, child]));
+    for i in 0..3 {
+        near(&back[i], before[i].as_f64().unwrap());
+    }
+    // Undo puts it where it was.
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.occurrences.iter().find(|o| o.id == child).unwrap().parent, 0);
+}
+/// A component can't go inside itself or what it holds. Out of a parent placed more than once it
+/// moves from the placement named, keeping that one's place in the world.
+#[test]
+fn reparent_refuses_cycles_and_moves_out_of_a_named_instance() {
+    let mut s = Session::default();
+    let (parent_component, parent) = created(&mut s, "Parent");
+    let (child_component, child) = created(&mut s, "Child");
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2}));
+    for into in [parent_component, child_component] {
+        assert!(s.execute("occurrence.reparent", &json!({"occurrence": parent, "parent": into})).is_err(), "into {into}");
+    }
+    let second = run(&mut s, "occurrence.copy", json!({"component": parent_component, "translate": [50,0,0]}))["occurrence"].as_u64().unwrap();
+    let err = s.execute("occurrence.reparent", &json!({"occurrence": child, "parent": 0})).unwrap_err().to_string();
+    assert!(err.contains("path"), "which placement is ambiguous: {err}");
+    run(&mut s, "occurrence.reparent", json!({"occurrence": child, "path": [second, child], "parent": 0}));
+    let result = run(&mut s, "occurrence.properties", json!({"occurrence": child, "path": [child]}));
+    near(&result["total"]["center_of_mass"][0], 51.0);
+}
 /// A component placed somewhere other than where it was made still can't take a placement of
-/// what holds it: A placed in B means B can't then be placed in A.
+/// what holds it: A placed in B means B can't then be placed in A, by copy or by a move.
 #[test]
 fn a_component_placed_in_another_cannot_then_hold_it() {
     let mut s = Session::default();
     let a = run(&mut s, "component.create", json!({"name": "A", "activate": false}))["component"].as_u64().unwrap();
-    let b = run(&mut s, "component.create", json!({"name": "B", "activate": false}))["component"].as_u64().unwrap();
+    let b = run(&mut s, "component.create", json!({"name": "B", "activate": false}));
+    let (b, b_occurrence) = (b["component"].as_u64().unwrap(), b["occurrence"].as_u64().unwrap());
     run(&mut s, "occurrence.copy", json!({"component": a, "parent": b}));
     assert!(s.execute("occurrence.copy", &json!({"component": b, "parent": a})).is_err(), "B inside A inside B");
+    assert!(s.execute("occurrence.reparent", &json!({"occurrence": b_occurrence, "parent": a})).is_err(), "moved, too");
 }
