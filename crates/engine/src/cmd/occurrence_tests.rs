@@ -697,6 +697,7 @@ fn reparent_keeps_the_world_position_and_follows_paths() {
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.occurrences.iter().find(|o| o.id == child).unwrap().parent, 0);
 }
+
 /// A component can't go inside itself or what it holds. Out of a parent placed more than once it
 /// moves from the placement named, keeping that one's place in the world.
 #[test]
@@ -715,6 +716,7 @@ fn reparent_refuses_cycles_and_moves_out_of_a_named_instance() {
     let result = run(&mut s, "occurrence.properties", json!({"occurrence": child, "path": [child]}));
     near(&result["total"]["center_of_mass"][0], 51.0);
 }
+
 /// Pasted into a component placed more than once, a component goes into every instance: placed
 /// by the active instance where the copied one is, and in the same place in the other.
 #[test]
@@ -735,6 +737,7 @@ fn a_component_pasted_into_an_instanced_component_goes_into_every_instance() {
         near(&result["total"]["center_of_mass"][1], y);
     }
 }
+
 /// A component placed somewhere other than where it was made still can't take a placement of
 /// what holds it: A placed in B means B can't then be placed in A, by copy or by a move.
 #[test]
@@ -747,6 +750,7 @@ fn a_component_placed_in_another_cannot_then_hold_it() {
     assert!(s.execute("occurrence.copy", &json!({"component": b, "parent": a})).is_err(), "B inside A inside B");
     assert!(s.execute("occurrence.reparent", &json!({"occurrence": b_occurrence, "parent": a})).is_err(), "moved, too");
 }
+
 /// Pasting a body into a component placed elsewhere puts the copy in that component, where the
 /// body is in the world, as one step to undo.
 #[test]
@@ -769,6 +773,7 @@ fn pasted_bodies_go_into_the_component_where_the_body_is() {
     run(&mut s, "edit.undo", json!({}));
     assert!(s.model.state().body(&copy).is_none());
 }
+
 /// A component pasted into another component, as an instance or as a new copy, sits where the
 /// copied placement is in the world; a new copy can't go inside the component itself.
 #[test]
@@ -792,6 +797,7 @@ fn components_paste_in_place_into_another_component() {
     let into_itself = json!({"component": holder, "occurrence": holder_occurrence, "parent": holder, "in_place": true});
     assert!(s.execute("component.paste_new", &into_itself).is_err());
 }
+
 /// A body pasted into a component placed more than once goes into every instance: placed by the
 /// active instance where the body is, and in the same place in the other.
 #[test]
@@ -806,4 +812,19 @@ fn a_body_pasted_into_an_instanced_component_goes_into_every_instance() {
         let result = run(&mut s, "occurrence.properties", json!({"occurrence": instance, "path": [instance]}));
         near(&result["total"]["center_of_mass"][1], y);
     }
+}
+
+/// The tree's order of a component's placements is kept, and only that: the placements stay as
+/// they were made.
+#[test]
+fn placements_order_in_the_tree_only() {
+    let mut s = Session::default();
+    let (_, a) = created(&mut s, "A");
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let (_, b) = created(&mut s, "B");
+    let made: Vec<u64> = s.doc.occurrences.iter().map(|o| o.id).collect();
+    run(&mut s, "browser.order", json!({"folder": "components", "component": 0, "order": [b.to_string(), a.to_string()]}));
+    assert_eq!(s.doc.browser_order["0/components"], vec![b.to_string(), a.to_string()]);
+    assert_eq!(s.doc.occurrences.iter().map(|o| o.id).collect::<Vec<_>>(), made);
+    assert!(s.execute("browser.order", &json!({"folder": "nonsense", "order": []})).is_err());
 }

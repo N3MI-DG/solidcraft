@@ -36,7 +36,10 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("view.apply", "Restore Named View", view_apply).icon("camera").noundo().params(
         "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name; or camera?: {target: [x,y,z], yaw, pitch, distance, fov?} (radians, mm) → camera. The viewport (and the MCP screenshot) moves there. View state: not saved, not an undo step",
     ),
-    CommandSpec::new("browser.order", "Order Browser Items", order).icon("reorder").params("folder, component?, order: [keys] (the folder's items in display order)"),
+    CommandSpec::new("browser.order", "Order Browser Items", order).icon("reorder").params(
+        "folder (bodies, sketches, construction, or components: the component's placements), component?, order: [keys] (the \
+         folder's items in display order; for components, occurrence ids)",
+    ),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").noundo().params(
         "visible: bool; items?: [sketch id or name | body name | construction name | joint name | O|X|Y|Z|XY|XZ|YZ]; \
          or joints?: [joint id or name] (their glyphs; they still constrain and move parts); \
@@ -152,7 +155,8 @@ fn move_items(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn order(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "browser.order";
-    let folder = folder_of(p, cmd)?;
+    // A component's placements are ordered too (only the tree's order: they stay as they are).
+    let folder = if str_(p, "folder") == Some("components") { "components".to_string() } else { folder_of(p, cmd)? };
     let component = component_of(s, p, cmd)?;
     let order = keys(p, "order", cmd)?;
     let key = format!("{component}/{folder}");
