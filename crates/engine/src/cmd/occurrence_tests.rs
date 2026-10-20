@@ -940,3 +940,21 @@ fn a_component_placed_in_another_cannot_then_hold_it() {
     assert!(s.execute("occurrence.copy", &json!({"component": b, "parent": a})).is_err(), "B inside A inside B");
     assert!(s.execute("occurrence.reparent", &json!({"occurrence": b_occurrence, "parent": a})).is_err(), "moved, too");
 }
+
+/// A component named after its body: each Paste New numbers the component and its body alike,
+/// one after the other, with no number skipped (they are numbered among their own kind).
+#[test]
+fn paste_new_numbers_a_component_and_its_body_alike() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "body_name": "Plate"}));
+    let plate = run(&mut s, "component.from_bodies", json!({"bodies": ["Plate"]}))["components"][0]["component"].as_u64().unwrap();
+    for _ in 0..2 {
+        run(&mut s, "component.paste_new", json!({"component": plate}));
+    }
+    let components: Vec<&str> = s.doc.components.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(components, ["Plate", "Plate (2)", "Plate (3)"]);
+    let state = s.model.state();
+    let mut bodies: Vec<&str> = state.bodies.iter().map(|b| b.name.as_str()).collect();
+    bodies.sort_unstable();
+    assert_eq!(bodies, ["Plate", "Plate (2)", "Plate (3)"]);
+}

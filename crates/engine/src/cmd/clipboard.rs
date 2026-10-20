@@ -116,17 +116,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         // `X (2)`, `X (3)`, and a second import of a file shows `Aa (2)` for the stored `Aa`. The
         // copies are found by the shown names; the stored ones only name the copies.
         let shown = if built.len() == outputs.len() { built } else { outputs.clone() };
-        let copied_names: Vec<_> = outputs
+        // Each copy is named after the body as shown, numbered: `Aa` → `Aa (2)`, `Aa (2)` → `Aa (2)(2)`.
+        let copied_names: Vec<_> = shown
             .iter()
-            .zip(&shown)
-            .map(|(original, shown)| {
-                let base = format!("{original} (copy)");
-                let mut name = base.clone();
-                let mut suffix = 2usize;
-                while !used.insert(name.clone()) {
-                    name = format!("{base} {suffix}");
-                    suffix += 1;
-                }
+            .map(|shown| {
+                let name = solidcraft_doc::copy_name(shown, |n| used.contains(n));
+                used.insert(name.clone());
                 bodies.insert(shown.clone(), name.clone());
                 name
             })
@@ -158,7 +153,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         } else {
             Vec::new()
         };
-        let id = doc.add_feature(kind, None)?;
+        // A copy keeps its original's name, numbered: `Sketch1` → `Sketch1 (2)`.
+        let name = solidcraft_doc::copy_name(&f.name, |n| doc.features.iter().any(|x| x.name == n));
+        let id = doc.add_feature(kind, Some(&name))?;
         if let Some(nf) = doc.feature_mut(id) {
             nf.component = comp;
             nf.body_names = copied_names;
@@ -325,7 +322,7 @@ mod tests {
         let import = run(&mut s, "file.insert_step", json!({"path": path.to_string_lossy()}))["feature"].clone();
         assert_eq!(body_names(&s), ["Aa", "Bb", "Cc"]);
         paste_import_with_two_lifts(&mut s, &import, ["Aa", "Bb", "Cc"]);
-        assert_eq!(body_names(&s), ["Aa", "Bb", "Cc", "Aa (copy)", "Bb (copy)", "Cc (copy)"]);
+        assert_eq!(body_names(&s), ["Aa", "Bb", "Cc", "Aa (2)", "Bb (2)", "Cc (2)"]);
         let at: Vec<Vec<f64>> = LIFTED.iter().chain(&LIFTED).map(|c| c.to_vec()).collect();
         assert_eq!(corners(&mut s), at);
     }
@@ -382,7 +379,7 @@ mod tests {
         assert_eq!(corners(&mut s), at, "{:?}", body_names(&s));
         let m = run(&mut s, "inspect.measure", json!({}));
         let names: Vec<&str> = m["bodies"].as_array().unwrap().iter().filter_map(|b| b["name"].as_str()).collect();
-        assert_eq!(names, ["Aa (copy)", "Bb (copy)", "Cc (copy)", "Aa", "Bb", "Cc", "Aa (2)", "Bb (2)", "Cc (2)"]);
+        assert_eq!(names, ["Aa (2)(2)", "Bb (2)(2)", "Cc (2)(2)", "Aa", "Bb", "Cc", "Aa (2)", "Bb (2)", "Cc (2)"]);
     }
 
     /// A cylinder Emboss finds its face by the persistent name it recorded when it was made. The
@@ -409,7 +406,7 @@ mod tests {
             assert!(mark.face_names.first().is_some_and(|n| n.starts_with(&format!("F{tube}:"))), "{:?}", mark.face_names);
             assert!((volume(&mut s) - 2.0 * one).abs() < 1e-6, "{translate:?}: both cylinders carry a badge");
             if translate.is_some() {
-                let m = run(&mut s, "inspect.measure", json!({"bodies": ["Sleeve (copy)"]}));
+                let m = run(&mut s, "inspect.measure", json!({"bodies": ["Sleeve (2)"]}));
                 let body = &m["bodies"][0];
                 let x = body["center_of_mass"][0].as_f64().unwrap_or(f64::NAN);
                 let y = body["bbox"]["max"][1].as_f64().unwrap_or(f64::NAN);
@@ -433,7 +430,7 @@ mod tests {
         assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
         let round = r["pasted"][2]["name"].as_str().unwrap_or_default().to_string();
         let def = run(&mut s, "timeline.inspect", json!({"feature": round}));
-        assert_eq!(def["definition"]["body"], "Block (copy)", "{def}");
+        assert_eq!(def["definition"]["body"], "Block (2)", "{def}");
         let m = run(&mut s, "inspect.measure", json!({}));
         assert_eq!(m["body_count"], 2, "{m}");
         assert!((volume(&mut s) - 2.0 * one).abs() < 1e-6, "both blocks are rounded: {m}");
@@ -466,10 +463,10 @@ mod tests {
         run(&mut s, "timeline.copy", json!({"features": ["Roof", "Shelf", "S", "Up", "T", "On"]}));
         let r = run(&mut s, "timeline.paste", json!({"translate": [100, 0, 10]}));
         assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
-        let up = measures(&mut s, "Up (copy)");
+        let up = measures(&mut s, "Up (2)");
         assert!((up["bbox"]["min"][2].as_f64().unwrap_or(0.0) - 10.0).abs() < 1e-6, "{up}");
         assert!((up["bbox"]["max"][2].as_f64().unwrap_or(0.0) - 30.0).abs() < 1e-6, "it ends on the pasted roof: {up}");
-        let on = measures(&mut s, "On (copy)");
+        let on = measures(&mut s, "On (2)");
         assert!((on["bbox"]["min"][2].as_f64().unwrap_or(0.0) - 22.0).abs() < 1e-6, "it starts on the pasted shelf: {on}");
         assert!((on["bbox"]["max"][2].as_f64().unwrap_or(0.0) - 27.0).abs() < 1e-6, "{on}");
     }
@@ -484,7 +481,7 @@ mod tests {
         run(&mut s, "timeline.copy", json!({"features": ["Block", "Drill"]}));
         let r = run(&mut s, "timeline.paste", json!({"translate": [60, 0, -6]}));
         assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
-        let (block, copy) = (measures(&mut s, "Block"), measures(&mut s, "Block (copy)"));
+        let (block, copy) = (measures(&mut s, "Block"), measures(&mut s, "Block (2)"));
         let v = |m: &serde_json::Value| m["volume_mm3"].as_f64().unwrap_or(f64::NAN);
         assert!((v(&block) - (16000.0 - std::f64::consts::PI * 25.0 * 10.0)).abs() < 1.0, "a through hole: {block}");
         assert!((v(&copy) - v(&block)).abs() < 1e-6, "the pasted hole goes through too: {copy}");
@@ -502,7 +499,7 @@ mod tests {
         run(&mut s, "timeline.copy", json!({"features": ["S", "Turn"]}));
         let r = run(&mut s, "timeline.paste", json!({"translate": [50, 0, 0]}));
         assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
-        let (arc, copy) = (measures(&mut s, "Arc"), measures(&mut s, "Arc (copy)"));
+        let (arc, copy) = (measures(&mut s, "Arc"), measures(&mut s, "Arc (2)"));
         let v = |m: &serde_json::Value| m["volume_mm3"].as_f64().unwrap_or(f64::NAN);
         // A quarter turn of a 5 × 5 section whose centre is 12.5 from the axis.
         let quarter = 25.0 * std::f64::consts::FRAC_PI_2 * 12.5;
@@ -525,12 +522,12 @@ mod tests {
         assert_eq!(r["errors"].as_array().map(Vec::len), Some(0), "{r}");
         let spring = r["pasted"][1]["name"].as_str().unwrap_or_default().to_string();
         let def = run(&mut s, "timeline.inspect", json!({"feature": spring}));
-        assert_eq!(def["definition"]["targets"], json!(["Plate (copy)"]), "{def}");
+        assert_eq!(def["definition"]["targets"], json!(["Plate (2)"]), "{def}");
         let st = s.world_state();
         let v = |name: &str| solidcraft_kernel::measure(&st.body(name).unwrap().body).unwrap().volume;
         // A spring on the wrong plate is hundreds of mm³ off. The two plates are measured apart
         // (one moved 50 mm), which the boolean and the measure each round in their own way:
         // a few 1e-6 mm³ on 5000.
-        assert!((v("Plate") - v("Plate (copy)")).abs() < 1e-8 * v("Plate"), "each plate carries one spring: {} vs {}", v("Plate"), v("Plate (copy)"));
+        assert!((v("Plate") - v("Plate (2)")).abs() < 1e-8 * v("Plate"), "each plate carries one spring: {} vs {}", v("Plate"), v("Plate (2)"));
     }
 }

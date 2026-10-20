@@ -284,9 +284,9 @@ fn edited_transfer_destination_updates_history_owner_copy_and_reopen() {
     assert_eq!(s.doc.to_json(), saved);
     assert_eq!(s.pending_moves, pending);
     let copied = run(&mut s, "component.paste_new", json!({"component":b}))["component"].as_u64().unwrap();
-    assert_eq!(s.model.state().body("Block (copy)").unwrap().component, copied);
+    assert_eq!(s.model.state().body("Block (2)").unwrap().component, copied);
     let mut reopened = Session { doc: solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap().into(), ..Session::default() };
     reopened.refresh();
     assert_eq!(reopened.model.state().body("Block").unwrap().component, b);
-    assert_eq!(reopened.model.state().body("Block (copy)").unwrap().component, copied);
+    assert_eq!(reopened.model.state().body("Block (2)").unwrap().component, copied);
 }

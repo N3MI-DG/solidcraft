@@ -327,7 +327,20 @@ fn copy_bodies(s: &mut Session, p: &Value) -> Result<Value> {
         // The copy is made where its body is, so it starts out in the same place.
         scratch.active_component = from;
         scratch.active_occurrence_path = None;
-        let made = string_list(&scratch.execute("solid.move", &json!({"bodies": bodies, "copy": true}))?, "created_bodies");
+        let mut made = string_list(&scratch.execute("solid.move", &json!({"bodies": bodies, "copy": true}))?, "created_bodies");
+        // Each copy is its body's name numbered as all copies are (`Cube (2)`, `Cube (2)(2)`): the
+        // move names a copy of `Cube (2)` `Cube (2) (2)`.
+        if made.len() == bodies.len() {
+            for (copy, original) in made.iter_mut().zip(&bodies) {
+                let state = scratch.model.state();
+                let name = solidcraft_doc::copy_name(original, |n| n != copy.as_str() && state.body(n).is_some());
+                drop(state);
+                if name != *copy {
+                    scratch.execute("body.rename", &json!({"body": copy, "name": name}))?;
+                    *copy = name;
+                }
+            }
+        }
         // The active placement again: a target placed more than once is placed by it.
         scratch.active_component = s.active_component;
         scratch.active_occurrence_path = s.active_occurrence_path.clone();
