@@ -432,6 +432,10 @@ pub struct SolveApp {
     /// Component placements copied with Copy (by path): Paste places new instances of them in
     /// the active component, Paste New (Ctrl+Shift+V) independent copies.
     pub copied_placements: Vec<Vec<u64>>,
+    /// Bodies cut with Cut (by name): they stay until Paste moves them into a component.
+    pub cut_bodies: Vec<String>,
+    /// Component placements cut with Cut (by path): they stay until Paste moves them.
+    pub cut_placements: Vec<Vec<u64>>,
     /// Esc was already acted on this frame (by the shortcuts), so later handlers skip it.
     pub esc_handled: bool,
     /// When Esc was last pressed (input time): a second press soon after finishes the sketch.
@@ -570,6 +574,8 @@ impl SolveApp {
             last_command: None,
             copied_bodies: Vec::new(),
             copied_placements: Vec::new(),
+            cut_bodies: Vec::new(),
+            cut_placements: Vec::new(),
             esc_handled: false,
             last_escape: None,
             status: None,
