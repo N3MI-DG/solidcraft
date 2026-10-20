@@ -178,6 +178,8 @@ fn swap_in(app: &mut SolveApp, mut slot: DocSlot) -> DocSlot {
     app.session.crash_journal = out.session.crash_journal;
     out.session.crash_journal = false;
     put_view(app, slot.view);
+    // Components picked in the browser are the outgoing design's: Copy must not copy them here.
+    app.tree.picked_components.clear();
     // Preferences the session holds go with the user, not the tab (#680).
     app.session.auto_project = out.session.auto_project;
     // Views cache by revision: the incoming design must not look unchanged.

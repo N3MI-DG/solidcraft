@@ -56,12 +56,22 @@ fn body_selection(app: &SolveApp) -> Vec<String> {
     app.session.selection.iter().filter_map(|s| if let Sel::Body { name } = s { Some(name.clone()) } else { None }).collect()
 }
 
+/// Does Copy copy the whole design (its row picked in the browser)? Features, bodies or
+/// components selected since then are what was meant, so the design gives way to them.
+fn copying_design(app: &SolveApp) -> bool {
+    app.session.active_sketch.is_none()
+        && app.tree.picked_components == [0]
+        && crate::timeline::selected_feature_ids(app).is_empty()
+        && body_selection(app).is_empty()
+        && placement_selection(app).is_empty()
+}
+
 /// Is there something Copy would copy?
 pub fn something_to_copy(app: &SolveApp) -> bool {
     if app.session.active_sketch.is_some() {
         !sketch_selection(app).is_empty()
     } else {
-        app.tree.picked_components == [0]
+        copying_design(app)
             || !crate::timeline::selected_feature_ids(app).is_empty()
             || !body_selection(app).is_empty()
             || !placement_selection(app).is_empty()
@@ -239,7 +249,7 @@ pub fn copy_design(app: &mut SolveApp) -> bool {
 
 /// Copy the selection: sketch geometry in a sketch, otherwise timeline features.
 pub fn copy(app: &mut SolveApp) -> bool {
-    if app.session.active_sketch.is_none() && app.tree.picked_components == [0] {
+    if copying_design(app) {
         return copy_design(app);
     }
     if app.session.active_sketch.is_some() {
