@@ -662,3 +662,14 @@ fn matrix_move_orthonormalises_rounding_and_refuses_what_is_not_rigid() {
     assert_eq!(s.doc.occurrences.iter().find(|o| o.id == occ).unwrap().transform, before);
     run(&mut s, "occurrence.move", json!({"occurrence": occ, "matrix": rounded, "tolerance": 1e-3}));
 }
+
+/// A component placed somewhere other than where it was made still can't take a placement of
+/// what holds it: A placed in B means B can't then be placed in A.
+#[test]
+fn a_component_placed_in_another_cannot_then_hold_it() {
+    let mut s = Session::default();
+    let a = run(&mut s, "component.create", json!({"name": "A", "activate": false}))["component"].as_u64().unwrap();
+    let b = run(&mut s, "component.create", json!({"name": "B", "activate": false}))["component"].as_u64().unwrap();
+    run(&mut s, "occurrence.copy", json!({"component": a, "parent": b}));
+    assert!(s.execute("occurrence.copy", &json!({"component": b, "parent": a})).is_err(), "B inside A inside B");
+}
