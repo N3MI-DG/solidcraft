@@ -37,11 +37,14 @@ struct DocView {
     shown_dims: Vec<u64>,
     locked_bodies: Vec<String>,
     /// Bodies and components copied or cut in this design: their names and paths mean nothing
-    /// in another one (copied features stay with the session the same way).
+    /// in another one (copied features stay with the session the same way). Another design
+    /// pastes them from `SolveApp::foreign_copy`.
     copied_bodies: Vec<String>,
     copied_placements: Vec<Vec<u64>>,
     cut_bodies: Vec<String>,
     cut_placements: Vec<Vec<u64>>,
+    /// `SolveApp::own_clipboard_stamp`.
+    own_clipboard_stamp: u64,
 }
 
 impl DocSlot {
@@ -101,6 +104,7 @@ fn take_view(app: &mut SolveApp) -> DocView {
         copied_placements: std::mem::take(&mut app.copied_placements),
         cut_bodies: std::mem::take(&mut app.cut_bodies),
         cut_placements: std::mem::take(&mut app.cut_placements),
+        own_clipboard_stamp: app.own_clipboard_stamp,
     }
 }
 
@@ -117,6 +121,8 @@ fn put_view(app: &mut SolveApp, v: DocView) {
     app.copied_placements = v.copied_placements;
     app.cut_bodies = v.cut_bodies;
     app.cut_placements = v.cut_placements;
+    app.own_clipboard_stamp = v.own_clipboard_stamp;
+    crate::edit_clipboard::drop_stale(app);
 }
 
 /// Put `slot` into the app and return what was there.
