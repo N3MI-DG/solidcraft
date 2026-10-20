@@ -873,3 +873,14 @@ fn a_body_pasted_into_an_instanced_component_goes_into_every_instance() {
         near(&result["total"]["center_of_mass"][1], y);
     }
 }
+
+/// A component placed somewhere other than where it was made still can't take a placement of
+/// what holds it: A placed in B means B can't then be placed in A, by copy.
+#[test]
+fn a_component_placed_in_another_cannot_then_hold_it() {
+    let mut s = Session::default();
+    let a = run(&mut s, "component.create", json!({"name": "A", "activate": false}))["component"].as_u64().unwrap();
+    let b = run(&mut s, "component.create", json!({"name": "B", "activate": false}))["component"].as_u64().unwrap();
+    run(&mut s, "occurrence.copy", json!({"component": a, "parent": b}));
+    assert!(s.execute("occurrence.copy", &json!({"component": b, "parent": a})).is_err(), "B inside A inside B");
+}

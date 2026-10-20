@@ -423,7 +423,7 @@ fn paste_new(s: &mut Session, p: &Value) -> Result<Value> {
     let t = move_vector(p, "translate", Vec3::ZERO, true, cmd)?;
     let parent = if p.get("parent").is_some() { component(s, p, "parent", cmd)? } else { occ.as_ref().map(|o| o.parent).unwrap_or(src.parent) };
     // A copy of a component holds what the component holds: not a place for it to go.
-    if s.doc.component_within(parent, comp) {
+    if s.doc.inside_component(parent, comp) {
         return Err(bad(cmd, format!("can't paste a copy of {} inside itself", src.name)));
     }
     let transform = match occ.as_ref().filter(|_| bool_(p, "in_place") == Some(true)) {
