@@ -849,6 +849,7 @@
   "cmd.component_metadata_set": "Change Part Properties",
   "cmd.component_move_bodies": "Move Bodies to Component",
   "cmd.component_move_sketches": "Move Sketches to Component",
+  "cmd.component_paste_from_design": "Paste from Another Design",
   "cmd.component_paste_new": "Paste New",
   "cmd.component_properties": "Component Physical Properties",
   "cmd.component_relink": "Relink Source",
