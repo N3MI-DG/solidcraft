@@ -33,7 +33,13 @@ pub(super) fn in_place(s: &Session, path: &[u64], parent: u64, parent_path: Opti
 /// The placement of `component` a move or paste is placed by (the design is the empty path): its
 /// path and world frame. `path` when given (it must lead to `component`), else its only
 /// placement, else the active placement when that is one of it.
-pub(super) fn placement_of(s: &Session, doc: &solidcraft_doc::Document, component: u64, path: Option<&[u64]>, cmd: &str) -> Result<(Vec<u64>, Mat)> {
+pub(in crate::cmd) fn placement_of(
+    s: &Session,
+    doc: &solidcraft_doc::Document,
+    component: u64,
+    path: Option<&[u64]>,
+    cmd: &str,
+) -> Result<(Vec<u64>, Mat)> {
     let name = || doc.components.iter().find(|c| c.id == component).map(|c| c.name.clone()).unwrap_or_else(|| "that component".into());
     if let Some(path) = path {
         let frame = doc.path_transform(component, path).ok_or_else(|| bad(cmd, format!("that path is not a placement of {}", name())))?;

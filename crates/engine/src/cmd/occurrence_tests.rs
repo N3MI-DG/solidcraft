@@ -958,3 +958,48 @@ fn paste_new_numbers_a_component_and_its_body_alike() {
     bodies.sort_unstable();
     assert_eq!(bodies, ["Plate", "Plate (2)", "Plate (3)"]);
 }
+
+/// A Paste New copy has features of its own: editing the copy leaves the original as it was.
+#[test]
+fn a_paste_new_copy_is_independent_of_its_original() {
+    let mut s = Session::default();
+    let (part, _) = created(&mut s, "Part");
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "S", "distance": 5, "body_name": "Block"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "component.paste_new", json!({"component": part}));
+    run(&mut s, "timeline.edit", json!({"feature": "Extrude1 (2)", "set": {"extent": {"distance": "30"}}}));
+    let state = s.model.state();
+    let volume = |name: &str| solidcraft_kernel::measure(&state.body(name).unwrap().body).unwrap().volume;
+    assert!((volume("Block") - 500.0).abs() < 1e-6, "the original is as it was");
+    assert!((volume("Block (2)") - 3000.0).abs() < 1e-6, "the copy changed");
+}
+
+/// What was pasted and moved keeps its place, name and component when the design is saved and
+/// opened again.
+#[test]
+fn pasted_and_moved_things_survive_reopening() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 2, "width": 2, "height": 2, "body_name": "Cube"}));
+    let (a, a_at) = created(&mut s, "A");
+    run(&mut s, "occurrence.move", json!({"occurrence": a_at, "translate": [100,0,0]}));
+    run(&mut s, "component.copy_bodies", json!({"bodies": ["Cube"]}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let (_, b_at) = created(&mut s, "B");
+    run(&mut s, "solid.box", json!({"length": 1, "width": 1, "height": 1, "corner": [50, 0, 0], "body_name": "Pin"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "occurrence.reparent", json!({"occurrence": b_at, "parent": a}));
+    let before = s.world_state();
+    let mut reopened = Session { doc: solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap().into(), ..Session::default() };
+    reopened.refresh();
+    let after = reopened.world_state();
+    for name in ["Cube", "Cube (2)", "Pin"] {
+        let (was, is) = (before.body(name).unwrap().mesh().bounds(), after.body(name).unwrap().mesh().bounds());
+        assert!(was.min.dist(is.min) < 1e-6 && was.max.dist(is.max) < 1e-6, "{name}: {was:?} → {is:?}");
+    }
+    let state = reopened.model.state();
+    assert_eq!(reopened.doc.model_body_component(state.body("Cube (2)").unwrap()), a);
+    assert_eq!(reopened.doc.occurrences.iter().find(|o| o.id == b_at).unwrap().parent, a);
+}
