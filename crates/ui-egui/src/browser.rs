@@ -782,11 +782,17 @@ fn model_placement(app: &mut SolveApp, path: &[u64]) -> Option<std::sync::Arc<so
     app.tree.model.as_mut()?.placement(&app.session, path)
 }
 
+/// The placements in `component`, in the tree's order (`browser.order` of its `components`; the
+/// ones it doesn't list after, as they were made).
 fn model_children(app: &SolveApp, component: u64) -> Vec<u64> {
-    match app.tree.model.as_ref().filter(|model| model.matches(&app.session)) {
+    let mut children = match app.tree.model.as_ref().filter(|model| model.matches(&app.session)) {
         Some(model) => model.children.get(&component).cloned().unwrap_or_default(),
         None => app.session.doc.occurrences.iter().filter(|o| o.parent == component).map(|o| o.id).collect(),
+    };
+    if let Some(order) = app.session.doc.browser_order.get(&format!("{component}/components")) {
+        children.sort_by_key(|id| order.iter().position(|k| *k == id.to_string()).unwrap_or(usize::MAX));
     }
+    children
 }
 
 fn model_body_indices(app: &SolveApp, component: u64) -> Vec<usize> {
@@ -946,6 +952,11 @@ fn component_rows(app: &mut SolveApp, ui: &mut egui::Ui, id: u64, depth: usize, 
     {
         acts.drop = Some(DropAction::Component { to: id, to_path: Vec::new(), keys: d.keys.clone(), group: None });
     }
+    if let Some(resp) = &r.resp
+        && let Some(d) = drop_target(ui, resp, |d: &PlacementDrag| d.moves_into(&app.session.doc, id), DropMark::Box)
+    {
+        acts.drop = Some(DropAction::Placement { path: d.path.clone(), to: id, to_path: Vec::new() });
+    }
     if !open {
         return;
     }
@@ -1060,6 +1071,37 @@ fn occurrence_rows(app: &mut SolveApp, ui: &mut egui::Ui, path: Vec<u64>, depth:
         && let Some(d) = drop_target(ui, resp, |d: &Drag| d.moves_into(placement.component, None), DropMark::Box)
     {
         acts.drop = Some(DropAction::Component { to: placement.component, to_path: path.clone(), keys: d.keys.clone(), group: None });
+    }
+    // The placement itself drags into another component (or out, onto the design's row), or,
+    // onto the top or bottom quarter of a row beside it, before or after that row.
+    if let Some(resp) = &r.resp {
+        let parent = app.session.doc.occurrences.iter().find(|o| o.id == placement.occurrence).map_or(0, |o| o.parent);
+        if resp.drag_started() && !r.on_control {
+            resp.dnd_set_drag_payload(PlacementDrag { path: path.clone(), component: placement.component, parent, label: placement.name.clone() });
+        }
+        let beside = |d: &PlacementDrag| d.parent == parent && d.path.last() != Some(&placement.occurrence);
+        let edge = ui.input(|i| i.pointer.latest_pos()).map(|p| (p.y - resp.rect.top()) / resp.rect.height().max(1.0)).and_then(|f| {
+            if f < 0.25 {
+                Some(false)
+            } else if f > 0.75 {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        let reorder = egui::DragAndDrop::payload::<PlacementDrag>(ui.ctx()).is_some_and(|d| beside(&d)) && edge.is_some();
+        if reorder {
+            let after = edge == Some(true);
+            if let Some(d) = drop_target(ui, resp, beside, if after { DropMark::Below } else { DropMark::Above }) {
+                let dragged = d.path.last().copied().unwrap_or_default();
+                let mut order: Vec<u64> = model_children(app, parent).into_iter().filter(|id| *id != dragged).collect();
+                let at = order.iter().position(|id| *id == placement.occurrence).map_or(order.len(), |i| i + usize::from(after));
+                order.insert(at, dragged);
+                acts.drop = Some(DropAction::OrderPlacements { component: parent, order });
+            }
+        } else if let Some(d) = drop_target(ui, resp, |d: &PlacementDrag| d.moves_into(&app.session.doc, placement.component), DropMark::Box) {
+            acts.drop = Some(DropAction::Placement { path: d.path.clone(), to: placement.component, to_path: path.clone() });
+        }
     }
     if !open {
         return;
@@ -1613,6 +1655,24 @@ impl Drag {
     }
 }
 
+/// A component placement being dragged in the tree, to move it into another component.
+#[derive(Clone, Debug)]
+struct PlacementDrag {
+    path: Vec<u64>,
+    /// The component it places, and the one it sits in now.
+    component: u64,
+    parent: u64,
+    label: String,
+}
+
+impl PlacementDrag {
+    /// Whether dropping it on component `to`'s row moves it there: somewhere new, and not into
+    /// itself or a component within it.
+    fn moves_into(&self, doc: &solidcraft_engine::doc::Document, to: u64) -> bool {
+        self.parent != to && !doc.inside_component(to, self.component)
+    }
+}
+
 /// The items of a component folder, in model order.
 fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
     let t = Tokens::get();
@@ -2049,9 +2109,14 @@ enum DropMark {
 }
 
 /// While a matching payload hovers the row, mark where it would land; on release, the payload.
-fn drop_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag) -> bool, mark: DropMark) -> Option<std::sync::Arc<Drag>> {
+fn drop_target<T: Send + Sync + 'static>(
+    ui: &egui::Ui,
+    resp: &egui::Response,
+    accept: impl Fn(&T) -> bool,
+    mark: DropMark,
+) -> Option<std::sync::Arc<T>> {
     let t = Tokens::get();
-    let hovering = resp.dnd_hover_payload::<Drag>().filter(|d| accept(d));
+    let hovering = resp.dnd_hover_payload::<T>().filter(|d| accept(d));
     if hovering.is_some() {
         let r = resp.rect;
         match mark {
@@ -2061,19 +2126,22 @@ fn drop_target(ui: &egui::Ui, resp: &egui::Response, accept: impl Fn(&Drag) -> b
         };
     }
     // Taking a payload takes it whatever its type: leave other drags (appearance swatches) be.
-    if !egui::DragAndDrop::has_payload_of_type::<Drag>(ui.ctx()) {
+    if !egui::DragAndDrop::has_payload_of_type::<T>(ui.ctx()) {
         return None;
     }
-    resp.dnd_release_payload::<Drag>().filter(|d| accept(d))
+    resp.dnd_release_payload::<T>().filter(|d| accept(d))
 }
 
 /// While tree items are dragged, their name follows the pointer, so the drag shows before the
 /// pointer reaches a row that takes it.
 fn drag_label(ctx: &egui::Context) {
-    let (Some(d), Some(p)) = (egui::DragAndDrop::payload::<Drag>(ctx), ctx.input(|i| i.pointer.latest_pos())) else { return };
+    let label = egui::DragAndDrop::payload::<Drag>(ctx)
+        .map(|d| d.label.clone())
+        .or_else(|| egui::DragAndDrop::payload::<PlacementDrag>(ctx).map(|d| d.label.clone()));
+    let (Some(label), Some(p)) = (label, ctx.input(|i| i.pointer.latest_pos())) else { return };
     let t = Tokens::get();
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("sc_browser_drag")));
-    let galley = painter.layout_no_wrap(d.label.clone(), FontId::proportional(12.5), t.text);
+    let galley = painter.layout_no_wrap(label, FontId::proportional(12.5), t.text);
     let r = Rect::from_min_size(p + vec2(14.0, 6.0), galley.size() + vec2(12.0, 6.0));
     painter.rect(r, 3.0, t.panel, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     painter.galley(r.min + vec2(6.0, 3.0), galley, t.text);
@@ -2089,6 +2157,11 @@ enum DropAction {
     /// component placed more than once gets them in every instance), and into a group of its
     /// Bodies folder when dropped on one.
     Component { to: u64, to_path: Vec<u64>, keys: Vec<String>, group: Option<u64> },
+    /// A placement (by its path) into component `to`, placed by its placement `to_path` (the row
+    /// it was dropped on): a component placed more than once gets it in every instance.
+    Placement { path: Vec<u64>, to: u64, to_path: Vec<u64> },
+    /// The placements in `component`, in this order in the tree.
+    OrderPlacements { component: u64, order: Vec<u64> },
 }
 
 fn apply_drop(app: &mut SolveApp, d: DropAction) {
@@ -2108,6 +2181,18 @@ fn apply_drop(app: &mut SolveApp, d: DropAction) {
             };
             // A drop that can't be done says why, rather than nothing happening.
             if let Err(e) = grouped {
+                app.set_status(e.to_string(), true);
+            }
+        }
+        DropAction::OrderPlacements { component, order } => {
+            let order: Vec<String> = order.iter().map(u64::to_string).collect();
+            if let Err(e) = app.run("browser.order", json!({ "folder": "components", "component": component, "order": order })) {
+                app.set_status(e.to_string(), true);
+            }
+        }
+        DropAction::Placement { path, to, to_path } => {
+            let Some(&occurrence) = path.last() else { return };
+            if let Err(e) = app.run("occurrence.reparent", json!({ "occurrence": occurrence, "path": path, "parent": to, "parent_path": to_path })) {
                 app.set_status(e.to_string(), true);
             }
         }
