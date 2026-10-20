@@ -20,7 +20,7 @@ mod model;
 
 mod features;
 
-pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: &str) {
+pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: Option<&str>) {
     features::reveal(app, id, body);
 }
 
@@ -72,7 +72,7 @@ pub struct TreeState {
     /// of a part apart) and open the components, placements and folders above it: Find in
     /// Browser, and a body picked in the viewport (#3005).
     pub reveal: Option<String>,
-    /// A native feature to reveal in its placed component's Features folder.
+    /// A native feature to reveal in its placed component's Features folder (Find in Timeline).
     pub(super) reveal_feature: Option<features::Reveal>,
     /// The Move/Copy panel of an occurrence.
     pub occurrence_move: Option<OccMove>,
