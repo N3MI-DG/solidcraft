@@ -22,6 +22,7 @@ pub mod recovery;
 pub mod render_jobs;
 pub mod sample;
 pub mod schema;
+pub mod shown_bodies;
 mod slicer_icon;
 pub mod slicers;
 pub mod timing;
@@ -292,6 +293,7 @@ pub struct Session {
     occurrence_visibility_cache: std::sync::Mutex<Option<occurrences::VisibilityCache>>,
     removed_later_cache: std::sync::Mutex<Option<occurrences::RemovedLaterCache>>,
     occurrence_bodies_cache: std::sync::Mutex<Option<occurrences::OccurrenceBodiesCache>>,
+    shown_bodies_cache: std::sync::Mutex<shown_bodies::ShownCache>,
     /// Pairs `inspect.clearance` measured, by the bodies' geometry where they stood (shared with
     /// scratch copies): a body that did not change or move is not measured again.
     clearance_cache: std::sync::Arc<std::sync::Mutex<cmd::clearance::PairCache>>,
@@ -462,6 +464,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             occurrence_bodies_cache: Default::default(),
+            shown_bodies_cache: Default::default(),
             clearance_cache: Default::default(),
             body_renames: Vec::new(),
             contact_meshes: Default::default(),
@@ -1102,6 +1105,7 @@ impl Session {
             occurrence_visibility_cache: Default::default(),
             removed_later_cache: Default::default(),
             occurrence_bodies_cache: Default::default(),
+            shown_bodies_cache: Default::default(),
             clearance_cache: self.clearance_cache.clone(),
             body_renames: Vec::new(),
             contact_meshes: self.contact_meshes.clone(),
