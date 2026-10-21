@@ -952,6 +952,43 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
         }
         None => s,
     };
+    // `--move OCC N`: unlock the import, then move occurrence OCC N steps through the
+    // `occurrence.move` command without capturing, as a drag does: the command's time and the
+    // world's after it, apart.
+    let s = match flag("--move").and_then(|i| Some((args.get(i + 1)?, args.get(i + 2)?))) {
+        Some((occ, n)) => {
+            let occ = occ.parse::<u64>().map_err(|_| "--move: an occurrence id")?;
+            let n = n.parse::<usize>().map_err(|_| "--move: a number of runs")?.clamp(1, 1000);
+            let mut s = s;
+            let path = s.doc.placements().into_iter().map(|(_, path, _)| path).find(|p| p.last() == Some(&occ)).ok_or("--move: no such placement")?;
+            if let Some(top) = path.first().and_then(|id| s.doc.occurrences.iter().find(|o| o.id == *id)).map(|o| o.component) {
+                let t = std::time::Instant::now();
+                let r = s.execute("component.unlock", &json!({"component": top}));
+                println!("{}", json!({"step": "unlock", "ms": t.elapsed().as_secs_f64() * 1000.0, "ok": r.is_ok()}));
+            }
+            let _ = s.world_state();
+            let (mut cmd, mut world) = (Vec::with_capacity(n), Vec::with_capacity(n));
+            for _ in 0..n {
+                let t = std::time::Instant::now();
+                s.execute("occurrence.move", &json!({"occurrence": occ, "path": path, "translate": [0, 0, -1.5], "capture": false}))
+                    .map_err(|e| e.to_string())?;
+                cmd.push(t.elapsed().as_secs_f64() * 1000.0);
+                let t = std::time::Instant::now();
+                let _ = s.world_state();
+                world.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            cmd.sort_by(f64::total_cmp);
+            world.sort_by(f64::total_cmp);
+            let at = |r: &Vec<f64>, q: f64| r.get(((r.len() - 1) as f64 * q).round() as usize).copied().unwrap_or(0.0);
+            println!(
+                "{}",
+                json!({"step": "move", "runs": n, "command_median_ms": at(&cmd, 0.5), "command_min_ms": at(&cmd, 0.0), "world_median_ms": at(&world, 0.5), "world_min_ms": at(&world, 0.0)})
+            );
+            let _ = s.execute("component.revert_position", &json!({}));
+            s
+        }
+        None => s,
+    };
     // `--drag N`: move a placement a step at a time without capturing it, as dragging it does,
     // N times each for the last placement (a small part) and the top one (everything), timing the
     // world the view asks for after each step.
