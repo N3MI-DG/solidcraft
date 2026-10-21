@@ -28,11 +28,28 @@ pub struct OccurrencePlacement {
 struct Placing<'a> {
     owned: std::collections::HashMap<u64, Vec<&'a solidcraft_doc::ModelBody>>,
     names: solidcraft_doc::WorldNames<'a>,
+    /// The occurrences by id and by the component they are placed in (each in the design's
+    /// order), and the components there are: a path is checked without a scan of the design.
+    by_id: std::collections::HashMap<u64, Vec<&'a solidcraft_doc::Occurrence>>,
+    children: std::collections::HashMap<u64, Vec<&'a solidcraft_doc::Occurrence>>,
+    components: std::collections::HashSet<u64>,
 }
 
 impl<'a> Placing<'a> {
     fn new(doc: &'a solidcraft_doc::Document, state: &'a solidcraft_doc::ModelState) -> Self {
-        Placing { owned: doc.bodies_by_component(state), names: solidcraft_doc::WorldNames::new(doc, state) }
+        let mut by_id: std::collections::HashMap<u64, Vec<&solidcraft_doc::Occurrence>> = std::collections::HashMap::new();
+        let mut children: std::collections::HashMap<u64, Vec<&solidcraft_doc::Occurrence>> = std::collections::HashMap::new();
+        for o in &doc.occurrences {
+            by_id.entry(o.id).or_default().push(o);
+            children.entry(o.parent).or_default().push(o);
+        }
+        Placing {
+            owned: doc.bodies_by_component(state),
+            names: solidcraft_doc::WorldNames::new(doc, state),
+            by_id,
+            children,
+            components: doc.components.iter().map(|c| c.id).collect(),
+        }
     }
 }
 
@@ -87,13 +104,14 @@ impl Session {
             if !seen.insert(*id) {
                 return Err(invalid("occurrence path repeats an id"));
             }
-            let o = self
-                .doc
-                .occurrences
-                .iter()
-                .find(|o| o.id == *id && o.parent == component)
+            let o = cx
+                .by_id
+                .get(id)
+                .into_iter()
+                .flatten()
+                .find(|o| o.parent == component)
                 .ok_or_else(|| invalid("occurrence path has a missing or mismatched parent"))?;
-            if !self.doc.components.iter().any(|c| c.id == o.component) {
+            if !cx.components.contains(&o.component) {
                 return Err(invalid("occurrence path has a missing component"));
             }
             parent_world = world;
@@ -103,8 +121,9 @@ impl Session {
             }
             component = o.component;
         }
-        let leaf = self.doc.occurrences.iter().find(|o| Some(&o.id) == path.last()).ok_or_else(|| invalid("occurrence path has no leaf"))?;
-        let Placing { owned, names } = cx;
+        let leaf =
+            path.last().and_then(|id| cx.by_id.get(id)).and_then(|o| o.first()).copied().ok_or_else(|| invalid("occurrence path has no leaf"))?;
+        let Placing { owned, names, .. } = cx;
         let bodies = owned
             .get(&component)
             .into_iter()
@@ -134,16 +153,43 @@ impl Session {
 
     /// The placements in `component` placed at `path`.
     fn children_in(&self, path: &[u64], component: u64, cx: &mut Placing<'_>) -> Result<Vec<OccurrencePlacement>> {
-        self.doc
-            .occurrences
-            .iter()
-            .filter(|o| o.parent == component)
-            .map(|o| {
+        let ids: Vec<u64> = cx.children.get(&component).into_iter().flatten().map(|o| o.id).collect();
+        ids.into_iter()
+            .map(|id| {
                 let mut child = path.to_vec();
-                child.push(o.id);
+                child.push(id);
                 self.placement_in(&child, cx)
             })
             .collect()
+    }
+
+    /// Every placement of the design, each as [`Session::occurrence_placement`] resolves it, with
+    /// what they read from the whole design gathered once: resolved one by one, a large assembly's
+    /// thousands of placements each read all of it again (#3720). Depth first, the last child
+    /// first; at most `max` paths walked and no children past 64 levels; a path that does not
+    /// resolve is left out with what is below it.
+    pub fn occurrence_placements(&self, max: usize) -> Vec<OccurrencePlacement> {
+        let state = self.model.state();
+        let mut cx = Placing::new(&self.doc, &state);
+        let mut stack: Vec<Vec<u64>> = cx.children.get(&0).into_iter().flatten().map(|o| vec![o.id]).collect();
+        let mut out = Vec::new();
+        let mut walked = 0;
+        while let Some(path) = stack.pop() {
+            walked += 1;
+            if walked > max {
+                break;
+            }
+            let Ok(placement) = self.placement_in(&path, &mut cx) else { continue };
+            if path.len() < 64 {
+                for child in cx.children.get(&placement.component).into_iter().flatten() {
+                    let mut next = path.clone();
+                    next.push(child.id);
+                    stack.push(next);
+                }
+            }
+            out.push(placement);
+        }
+        out
     }
 
     /// Bounded descendant expansion. Never return an incomplete selection or bounds list.

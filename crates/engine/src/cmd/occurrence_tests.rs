@@ -818,3 +818,37 @@ fn a_board_of_many_placed_parts_expands_to_its_world_bodies() {
     }
     assert_eq!(seen, world);
 }
+
+#[test]
+fn every_placement_in_one_pass_resolves_as_each_on_its_own() {
+    // A board placed twice holding a part placed three times, one placement moved and not
+    // captured (#3720): the walk gives each placement once, as resolving its path alone does.
+    let mut s = Session::default();
+    let (board_component, board) = created(&mut s, "Board");
+    let (part_component, part) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length":2,"width":1,"height":0.5}));
+    for k in 1..3 {
+        let mut m = solidcraft_doc::IDENTITY;
+        m[3][0] = f64::from(k) * 3.0;
+        s.doc_mut().add_occurrence(part_component, board_component, m).unwrap();
+    }
+    s.doc_mut().add_occurrence(board_component, 0, solidcraft_doc::IDENTITY).unwrap();
+    run(&mut s, "component.activate", json!({"component":0}));
+    run(&mut s, "occurrence.move", json!({"occurrence":part,"path":[board, part],"translate":[0,0,5],"capture":false}));
+    let all = s.occurrence_placements(100_000);
+    // Two boards and three parts on each.
+    assert_eq!(all.len(), 8);
+    let mut paths = std::collections::BTreeSet::new();
+    for p in &all {
+        assert!(paths.insert(p.path.clone()), "{:?} twice", p.path);
+        let alone = s.occurrence_placement(&p.path).unwrap();
+        assert_eq!((p.occurrence, p.component, &p.name, p.grounded), (alone.occurrence, alone.component, &alone.name, alone.grounded));
+        assert_eq!((p.world, p.local, p.parent_world), (alone.world, alone.local, alone.parent_world));
+        let names = |q: &crate::occurrences::OccurrencePlacement| q.bodies.iter().map(|b| (b.source.clone(), b.world.clone())).collect::<Vec<_>>();
+        assert_eq!(names(p), names(&alone));
+    }
+    // The moved part is where the move left it.
+    let moved = all.iter().find(|p| p.path == [board, part]).unwrap();
+    assert!((moved.world[3][2] - 5.0).abs() < 1e-9);
+    assert!(s.occurrence_placements(3).len() <= 3);
+}
