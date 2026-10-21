@@ -3025,11 +3025,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || app.viewport.axis_drag.is_some()
         || app.viewport.spin
         || app.cam_anim.is_some();
+    crate::frame_watch::step(app, "viewport input");
     // A part dragged along its joint owns the pointer: nothing under it lights up (#5137).
     let hits = hover
         .filter(|_| inside && app.viewport.boxsel.is_none() && !crate::joint_drag::active(app) && !navigating)
         .map(|p| pick_cached(app, &proj, p))
         .unwrap_or_default();
+    crate::frame_watch::step(app, "hover pick");
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
@@ -3086,6 +3088,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 *slot = Some(scene);
             }
             app.viewport.sketch_key = sk;
+            crate::frame_watch::step(app, "sketch scene");
         }
         let hk = highlight_key(app);
         if hk != app.viewport.hl_key {
@@ -3094,6 +3097,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 *slot = Some(hl);
             }
             app.viewport.hl_key = hk;
+            crate::frame_watch::step(app, "highlight");
         }
         crate::frame_watch::step(app, "highlight scene");
         let ppp = ui.ctx().pixels_per_point();
@@ -3142,6 +3146,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             },
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
+        crate::frame_watch::step(app, "viewport callback");
     }
     let overlay_rect = crate::shell::bottom_overlay_rect(app, rect);
     analysis_legend(app, &painter, overlay_rect);
