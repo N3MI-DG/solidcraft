@@ -36,8 +36,8 @@ pub(super) fn reparent(s: &mut Session, p: &Value) -> Result<Value> {
     let moved = occurrence_path(s, p, id, cmd)?;
     let to_given = parent_path(p, cmd)?;
     let doc = s.placed_document();
-    let (from_path, from_frame) = placement_of(s, &doc, o.parent, moved.split_last().map(|(_, up)| up), cmd)?;
-    let (to_path, to_frame) = placement_of(s, &doc, to, to_given.as_deref(), cmd)?;
+    let (from_path, from_frame) = placement_of(s, &doc, o.parent, moved.split_last().map(|(_, up)| up), "path", cmd)?;
+    let (to_path, to_frame) = placement_of(s, &doc, to, to_given.as_deref(), "parent_path", cmd)?;
     let local = doc.occurrences.iter().find(|x| x.id == id).map(|x| x.transform).unwrap_or(o.transform);
     let world = solidcraft_doc::mat_mul(&from_frame, &local);
     let inverse = solidcraft_doc::mat_inverse(&to_frame).ok_or_else(|| bad(cmd, "the new parent's frame is not invertible"))?;

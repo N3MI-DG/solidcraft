@@ -164,7 +164,7 @@ fn move_at_boundary(s: &mut Session, p: &Value, allow_boundary: bool) -> Result<
     // component placed more than once gets the bodies in every instance, placed by that one.
     let given = path_param(p, "component_path", cmd)?;
     if given.is_some() || frames.get(&to).is_some_and(Option::is_none) {
-        let placed = super::placing::placement_of(&scratch, &scratch.placed_document(), to, given.as_deref(), cmd)?;
+        let placed = super::placing::placement_of(&scratch, &scratch.placed_document(), to, given.as_deref(), "component_path", cmd)?;
         frames.insert(to, Some(placed));
     }
     // The bodies move from the placement named (`from_path`: one of several where their component

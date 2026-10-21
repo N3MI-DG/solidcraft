@@ -92,7 +92,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     let author_path = match given_path {
         Some(path) => path,
         None if comp == s.active_component => s.active_occurrence_path.clone().unwrap_or_else(|| s.doc.first_path(comp)),
-        None => super::component::placing::placement_of(s, &s.placed_document(), comp, None, cmd)?.0,
+        None => super::component::placing::placement_of(s, &s.placed_document(), comp, None, "component_path", cmd)?.0,
     };
     solidcraft_doc::EmbossFace::component_frame(&s.placed_document(), comp, &author_path)?;
     // A copy from another component goes where its original is in the world: its geometry moves
