@@ -4,7 +4,7 @@
 //! solidcraft-cli run <script.json|design.solidcraft|part.step|mesh.3mf> [--in design|part.step|mesh.3mf] [--out FILE]... [--save FILE] [--quiet] [--results] [--timings] [--profile] [--json-out FILE] [--allow-errors]
 //! solidcraft-cli eval <script.json|design.solidcraft|part.step> [--json-out FILE] (alias: inspect) measurements as JSON
 //! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
-//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] [--ops script.json] loading timings as JSON lines
+//! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] [--ops script.json] [--world N] [--hide N] [--drag N] loading timings as JSON lines
 //! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
 //! solidcraft-cli bench-assistant --connect 127.0.0.1:PORT [--token T] --base-url URL --model NAME [--tasks 1,2,5] [--repeat N]
 //!                                 [--timeout-s 300] [--json out.json] [--markdown out.md]
@@ -61,7 +61,7 @@ const USAGE_EVAL: &str = "  solidcraft-cli eval <script.json|design.solidcraft|p
 /// `script`'s lines in the usage.
 const USAGE_SCRIPT: &str = "  solidcraft-cli script <design.solidcraft|script.json> [--out script.json]\n      (the design's history as a command script that eval and run replay)\n";
 /// `bench-open`'s lines in the usage.
-const USAGE_BENCH_OPEN: &str = "  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] [--ops script.json]\n      (--ops: after opening, run each command of the script and undo it, timing the command, the\n       evaluations it caused and the view it leaves: placing and meshing what changed)\n";
+const USAGE_BENCH_OPEN: &str = "  solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] [--ops script.json] [--world N] [--hide N] [--drag N]\n      (--ops: after opening, run each command of the script and undo it, timing the command, the\n       evaluations it caused and the view it leaves: placing and meshing what changed;\n       --world N: place the model in the world N more times, reusing what was placed, and print\n       the times and a digest of the bodies placed; --hide N: hide the top and the last placement\n       in turn N times, timing the first visibility question after each; --drag N: move the last\n       and the top placement N steps each without capturing, timing the world after each step)\n";
 /// `bench-agent`'s lines in the usage.
 const USAGE_BENCH_AGENT: &str = "  solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]\n";
 /// `bench-assistant`'s lines in the usage.
@@ -876,6 +876,126 @@ pub(crate) fn cmd_bench_open(args: &[String]) -> Result<(), String> {
                 "{}",
                 json!({"step": "save", "ms": save_ms, "bytes": bytes.len(), "plain_ms": plain_ms, "plain_bytes": plain_bytes, "cached_bodies": cached, "cache_read_ms": read_ms, "refused": refused})
             );
+            s
+        }
+        None => s,
+    };
+    // `--world N`: place the model in the world again N times, reusing the bodies placed before,
+    // as every document change that leaves the geometry alone does.
+    if let Some(n) = flag("--world").and_then(|i| args.get(i + 1)) {
+        let n = n.parse::<usize>().map_err(|_| "--world: a number of runs")?.clamp(1, 1000);
+        let state = s.model.state();
+        let mut reuse = solidcraft_engine::doc::PlacedBodies::default();
+        let t = std::time::Instant::now();
+        let mut world = solidcraft_engine::doc::world_state_reusing(&s.doc, &state, &mut reuse);
+        let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let mut runs = Vec::with_capacity(n);
+        for _ in 0..n {
+            let t = std::time::Instant::now();
+            let next = solidcraft_engine::doc::world_state_reusing(&s.doc, &state, &mut reuse);
+            runs.push(t.elapsed().as_secs_f64() * 1000.0);
+            world = next;
+        }
+        runs.sort_by(f64::total_cmp);
+        // What was placed, so a change can show it places the same bodies in the same places.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for b in &world.bodies {
+            std::hash::Hash::hash(&b.name, &mut h);
+            b.source_transform.iter().flatten().for_each(|v| std::hash::Hash::hash(&v.to_bits(), &mut h));
+        }
+        let digest = format!("{:016x}", std::hash::Hasher::finish(&h));
+        let at = |q: f64| runs.get(((runs.len() - 1) as f64 * q).round() as usize).copied().unwrap_or(0.0);
+        println!(
+            "{}",
+            json!({"step": "world", "runs": n, "cold_ms": cold_ms, "min_ms": at(0.0), "median_ms": at(0.5), "max_ms": at(1.0),
+                "bodies": world.bodies.len(), "model_bodies": state.bodies.len(), "placements": s.doc.placements().len(),
+                "occurrences": s.doc.occurrences.len(), "digest": digest})
+        );
+    }
+    // `--hide N`: hide the top placement and the last one in turn, N times each, timing what the
+    // view asks first (is a body shown), which works out every body the hidden placement hides.
+    let s = match flag("--hide").and_then(|i| args.get(i + 1)) {
+        Some(n) => {
+            let n = n.parse::<usize>().map_err(|_| "--hide: a number of runs")?.clamp(1, 1000);
+            let mut s = s;
+            let paths: Vec<Vec<u64>> = s.doc.placements().into_iter().map(|(_, path, _)| path).filter(|p| !p.is_empty()).collect();
+            let (Some(top), Some(last)) = (paths.first().cloned(), paths.last().cloned()) else {
+                return Err("--hide: the design has no placements".into());
+            };
+            let world = s.world_state();
+            let probe = world.bodies.first().map(|b| b.name.clone()).unwrap_or_default();
+            let mut runs = [Vec::with_capacity(n), Vec::with_capacity(n)];
+            for k in 0..n * 2 {
+                s.visibility.hidden_occurrences = vec![if k % 2 == 0 { top.clone() } else { last.clone() }];
+                let t = std::time::Instant::now();
+                let _ = s.body_visible(&probe);
+                if let Some(r) = runs.get_mut(k % 2) {
+                    r.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            runs.iter_mut().for_each(|r| r.sort_by(f64::total_cmp));
+            // How many bodies each hides, so a change can show it hides the same ones.
+            let mut hidden = Vec::new();
+            for path in [&top, &last] {
+                s.visibility.hidden_occurrences = vec![path.clone()];
+                hidden.push(world.bodies.iter().filter(|b| !s.body_visible(&b.name)).count());
+            }
+            s.visibility.hidden_occurrences.clear();
+            let at = |r: &Vec<f64>, q: f64| r.get(((r.len() - 1) as f64 * q).round() as usize).copied().unwrap_or(0.0);
+            let [top_runs, last_runs] = &runs;
+            println!(
+                "{}",
+                json!({"step": "hide", "runs": n, "top_median_ms": at(top_runs, 0.5), "top_min_ms": at(top_runs, 0.0), "last_median_ms": at(last_runs, 0.5),
+                    "last_min_ms": at(last_runs, 0.0), "hidden_top": hidden.first(), "hidden_last": hidden.get(1)})
+            );
+            s
+        }
+        None => s,
+    };
+    // `--drag N`: move a placement a step at a time without capturing it, as dragging it does,
+    // N times each for the last placement (a small part) and the top one (everything), timing the
+    // world the view asks for after each step.
+    let s = match flag("--drag").and_then(|i| args.get(i + 1)) {
+        Some(n) => {
+            let n = n.parse::<usize>().map_err(|_| "--drag: a number of runs")?.clamp(1, 1000);
+            let mut s = s;
+            let paths: Vec<Vec<u64>> = s.doc.placements().into_iter().map(|(_, path, _)| path).filter(|p| !p.is_empty()).collect();
+            let ends = [paths.last().and_then(|p| p.last()).copied(), paths.first().and_then(|p| p.last()).copied()];
+            let mut out = serde_json::Map::new();
+            out.insert("step".into(), json!("drag"));
+            out.insert("runs".into(), json!(n));
+            for (label, id) in ["last", "top"].into_iter().zip(ends) {
+                let Some(id) = id else { return Err("--drag: the design has no placements".into()) };
+                let base = s.doc.occurrences.iter().find(|o| o.id == id).map(|o| o.transform).ok_or("--drag: no occurrence")?;
+                let _ = s.world_state();
+                let mut runs = Vec::with_capacity(n);
+                let mut world = s.world_state();
+                for k in 0..n {
+                    let mut m = base;
+                    if let Some(t) = m.get_mut(3) {
+                        t[0] += 0.1 * (k + 1) as f64;
+                    }
+                    s.pending_moves.insert(id, m);
+                    s.revision += 1;
+                    let t = std::time::Instant::now();
+                    world = s.world_state();
+                    runs.push(t.elapsed().as_secs_f64() * 1000.0);
+                }
+                runs.sort_by(f64::total_cmp);
+                // Where the bodies ended, so a change can show it places them the same.
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for b in &world.bodies {
+                    std::hash::Hash::hash(&b.name, &mut h);
+                    b.source_transform.iter().flatten().for_each(|v| std::hash::Hash::hash(&v.to_bits(), &mut h));
+                }
+                let at = |q: f64| runs.get(((runs.len() - 1) as f64 * q).round() as usize).copied().unwrap_or(0.0);
+                out.insert(format!("{label}_median_ms"), json!(at(0.5)));
+                out.insert(format!("{label}_min_ms"), json!(at(0.0)));
+                out.insert(format!("{label}_digest"), json!(format!("{:016x}", std::hash::Hasher::finish(&h))));
+                s.pending_moves.clear();
+                s.revision += 1;
+            }
+            println!("{}", Value::Object(out));
             s
         }
         None => s,

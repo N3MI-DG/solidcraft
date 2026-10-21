@@ -377,12 +377,20 @@ impl Session {
     fn bodies_hidden_by_parents(&self) -> std::collections::BTreeSet<String> {
         let st = self.model.state();
         let mut out = std::collections::BTreeSet::new();
+        // Bodies by component and what naming reads, gathered once for every placement.
+        let owned = self.doc.bodies_by_component(&st);
+        let mut names = solidcraft_doc::WorldNames::new(&self.doc, &st);
+        let folders = !self.visibility.hidden_folders.is_empty();
         for (component, path, _) in self.doc.placements() {
             let placement_hidden = !path.is_empty() && !self.occurrence_visible(&path);
+            // A shown placement hides a body only through a hidden folder.
+            if !placement_hidden && !folders {
+                continue;
+            }
             let scope = Self::folder_scope(&path);
-            for b in st.bodies.iter().filter(|b| self.doc.model_body_component(b) == component) {
+            for b in owned.get(&component).into_iter().flatten() {
                 if placement_hidden || self.item_folder_hidden(&scope, component, "bodies", &b.name) {
-                    out.insert(self.doc.world_body_name(&st, &b.name, component, &path));
+                    out.insert(names.name(&b.name, component, &path));
                 }
             }
         }
