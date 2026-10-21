@@ -789,3 +789,32 @@ fn joins_into_a_moved_occurrence_meet_the_tool_where_it_is_shown() {
     let want = 10.0 * 10.0 * 10.0 - 4.0 * 4.0 * 10.0;
     assert!((volume(&s, "C") - want).abs() < 1e-6 * want, "C: {} vs {want}", volume(&s, "C"));
 }
+
+#[test]
+fn a_board_of_many_placed_parts_expands_to_its_world_bodies() {
+    // A board placed twice, holding one part placed 150 times (#3720): expanding a placement
+    // names every body as the world shows it.
+    let mut s = Session::default();
+    let (board_component, board) = created(&mut s, "Board");
+    let (part_component, _) = created(&mut s, "Part");
+    run(&mut s, "solid.box", json!({"length":2,"width":1,"height":0.5}));
+    run(&mut s, "solid.cylinder", json!({"diameter":1,"height":2}));
+    for k in 1..150 {
+        let mut m = solidcraft_doc::IDENTITY;
+        m[3][0] = f64::from(k) * 3.0;
+        s.doc_mut().add_occurrence(part_component, board_component, m).unwrap();
+    }
+    let board2 = s.doc_mut().add_occurrence(board_component, 0, solidcraft_doc::IDENTITY).unwrap();
+    s.refresh();
+    let world: std::collections::BTreeSet<String> = s.world_state().bodies.iter().map(|b| b.name.clone()).collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for path in [[board], [board2]] {
+        let bodies = s.occurrence_bodies(&path, true).unwrap();
+        assert_eq!(bodies.len(), 300, "{path:?}");
+        for name in bodies {
+            assert!(world.contains(&name), "{name} is not a world body");
+            assert!(seen.insert(name.clone()), "{name} named twice");
+        }
+    }
+    assert_eq!(seen, world);
+}

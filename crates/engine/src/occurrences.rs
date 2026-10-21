@@ -21,6 +21,21 @@ pub struct OccurrencePlacement {
     pub bodies: Vec<OccurrenceBody>,
 }
 
+/// What resolving placements of one model state reads from the whole design, gathered once per
+/// call: each component's bodies and the world names. Resolving each placement on its own walked
+/// every body and every occurrence for every body placed, so expanding a large assembly took
+/// most of a second (#3720).
+struct Placing<'a> {
+    owned: std::collections::HashMap<u64, Vec<&'a solidcraft_doc::ModelBody>>,
+    names: solidcraft_doc::WorldNames<'a>,
+}
+
+impl<'a> Placing<'a> {
+    fn new(doc: &'a solidcraft_doc::Document, state: &'a solidcraft_doc::ModelState) -> Self {
+        Placing { owned: doc.bodies_by_component(state), names: solidcraft_doc::WorldNames::new(doc, state) }
+    }
+}
+
 fn invalid(message: &str) -> EngineError {
     EngineError::Other(message.to_string())
 }
@@ -56,6 +71,11 @@ impl Session {
     }
     /// Resolve only the supplied path, never an exponentially expanded assembly.
     pub fn occurrence_placement(&self, path: &[u64]) -> Result<OccurrencePlacement> {
+        let state = self.model.state();
+        self.placement_in(path, &mut Placing::new(&self.doc, &state))
+    }
+
+    fn placement_in(&self, path: &[u64], cx: &mut Placing<'_>) -> Result<OccurrencePlacement> {
         if path.is_empty() || path.len() > 64 {
             return Err(invalid("occurrence path must contain 1..64 ids"));
         }
@@ -84,12 +104,12 @@ impl Session {
             component = o.component;
         }
         let leaf = self.doc.occurrences.iter().find(|o| Some(&o.id) == path.last()).ok_or_else(|| invalid("occurrence path has no leaf"))?;
-        let state = self.model.state();
-        let bodies = state
-            .bodies
-            .iter()
-            .filter(|b| self.doc.model_body_component(b) == component)
-            .map(|b| OccurrenceBody { source: b.name.clone(), world: self.doc.world_body_name(&state, &b.name, component, path) })
+        let Placing { owned, names } = cx;
+        let bodies = owned
+            .get(&component)
+            .into_iter()
+            .flatten()
+            .map(|b| OccurrenceBody { source: b.name.clone(), world: names.name(&b.name, component, path) })
             .collect();
         Ok(OccurrencePlacement {
             occurrence: leaf.id,
@@ -106,7 +126,14 @@ impl Session {
 
     /// Children are definitions shared by every placement of the parent component.
     pub fn occurrence_children(&self, path: &[u64]) -> Result<Vec<OccurrencePlacement>> {
-        let component = if path.is_empty() { 0 } else { self.occurrence_placement(path)?.component };
+        let state = self.model.state();
+        let mut cx = Placing::new(&self.doc, &state);
+        let component = if path.is_empty() { 0 } else { self.placement_in(path, &mut cx)?.component };
+        self.children_in(path, component, &mut cx)
+    }
+
+    /// The placements in `component` placed at `path`.
+    fn children_in(&self, path: &[u64], component: u64, cx: &mut Placing<'_>) -> Result<Vec<OccurrencePlacement>> {
         self.doc
             .occurrences
             .iter()
@@ -114,14 +141,16 @@ impl Session {
             .map(|o| {
                 let mut child = path.to_vec();
                 child.push(o.id);
-                self.occurrence_placement(&child)
+                self.placement_in(&child, cx)
             })
             .collect()
     }
 
     /// Bounded descendant expansion. Never return an incomplete selection or bounds list.
     pub fn occurrence_bodies(&self, path: &[u64], descendants: bool) -> Result<Vec<String>> {
-        let mut stack = vec![self.occurrence_placement(path)?];
+        let state = self.model.state();
+        let mut cx = Placing::new(&self.doc, &state);
+        let mut stack = vec![self.placement_in(path, &mut cx)?];
         let mut out = Vec::new();
         let mut count = 0;
         while let Some(placement) = stack.pop() {
@@ -131,7 +160,7 @@ impl Session {
             }
             out.extend(placement.bodies.into_iter().map(|b| b.world));
             if descendants {
-                stack.extend(self.occurrence_children(&placement.path)?);
+                stack.extend(self.children_in(&placement.path, placement.component, &mut cx)?);
             }
         }
         Ok(out)
