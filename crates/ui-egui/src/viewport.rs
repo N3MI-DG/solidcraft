@@ -2430,7 +2430,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         || app.viewport.spin
         || app.viewport.orbit_snap.is_some()
         || app.cam_anim.is_some();
+    crate::frame_watch::step(app, "viewport input");
     let hits = hover.filter(|_| inside && app.viewport.boxsel.is_none() && !navigating).map(|p| pick_cached(app, &proj, p)).unwrap_or_default();
+    crate::frame_watch::step(app, "hover pick");
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
@@ -2483,6 +2485,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 *slot = Some(scene);
             }
             app.viewport.sketch_key = sk;
+            crate::frame_watch::step(app, "sketch scene");
         }
         let hk = highlight_key(app);
         if hk != app.viewport.hl_key {
@@ -2491,6 +2494,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 *slot = Some(hl);
             }
             app.viewport.hl_key = hk;
+            crate::frame_watch::step(app, "highlight");
         }
         let ppp = ui.ctx().pixels_per_point();
         let size_px = [rect.width() * ppp, rect.height() * ppp];
@@ -2528,7 +2532,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             },
         });
         painter.add(egui_wgpu::Callback::new_paint_callback(rect, cb));
+        crate::frame_watch::step(app, "viewport callback");
         crate::pick_buffer::paint(app, ui.ctx(), &painter, &proj);
+        crate::frame_watch::step(app, "pick buffer");
     }
     analysis_legend(app, &painter, rect);
     crate::frame_rate::paint(app, ui.ctx(), &painter, rect);
