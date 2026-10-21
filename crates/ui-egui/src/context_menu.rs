@@ -815,7 +815,10 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     }
     v.push(act("ui.paste", "Paste", "paste").key("Ctrl+V").with(into.clone()).on(pastes_here));
     v.push(
-        act("ui.pasteNew", "Paste New", "paste").key("Ctrl+Shift+V").with(into.clone()).on(pastes_here && crate::edit_clipboard::pasting_components(app)),
+        act("ui.pasteNew", "Paste New", "paste")
+            .key("Ctrl+Shift+V")
+            .with(into.clone())
+            .on(pastes_here && crate::edit_clipboard::pasting_components(app)),
     );
     if id != 0 {
         v.push(act("ui.delete", "Delete", "delete").key("Del").with(json!({ "occurrences": [occ.map(|o| o.id)] })).on(occ.is_some()));
