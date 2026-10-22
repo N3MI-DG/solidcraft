@@ -24,6 +24,33 @@ pub(crate) fn reveal_feature(app: &mut SolveApp, id: u64, body: Option<&str>) {
     features::reveal(app, id, body);
 }
 
+/// Find in Browser for a body: open every row that holds it (the document, the placements down
+/// to it, its Bodies folder and any group around it) and scroll its row into view. The rows
+/// are opened here, not while drawing, because a collapsed ancestor never draws its children.
+pub(crate) fn reveal_body(app: &mut SolveApp, body: &str) {
+    app.ui.show_browser = true;
+    app.preferences.timeline_left_browser_collapsed = false;
+    app.tree.reveal_feature = None;
+    app.tree.reveal = Some(body.to_string());
+    let state = app.session.model.state();
+    let Some(source) = app.session.world_state().body(body).map(|selected| selected.definition_name().to_string()) else { return };
+    let Some((component, path, _)) =
+        app.session.doc.placements().into_iter().find(|(owner, path, _)| app.session.doc.world_body_name(&state, &source, *owner, path) == body)
+    else {
+        return;
+    };
+    app.tree.collapsed.remove("c0");
+    for depth in 1..=path.len() {
+        app.tree.collapsed.remove(&occurrence_key(&path[..depth]));
+    }
+    let scope = if path.is_empty() { format!("c{component}") } else { occurrence_key(&path) };
+    app.tree.collapsed.remove(&scope);
+    app.tree.collapsed.remove(&format!("{scope}/bodies"));
+    for g in app.session.doc.browser_groups.iter().filter(|g| g.component == component && g.folder == "bodies" && g.items.contains(&source)) {
+        app.tree.collapsed.remove(&format!("{scope}/g{}", g.id));
+    }
+}
+
 #[cfg(test)]
 #[path = "browser_model_tests.rs"]
 mod model_tests;
@@ -265,7 +292,7 @@ pub fn group_action(app: &mut SolveApp, action: &str, p: &Value) {
                 && let Some(g) = r.get("group").and_then(Value::as_u64)
             {
                 app.tree.collapsed.remove(&format!("c{comp}/{folder}"));
-                app.tree.collapsed.remove(&format!("g{g}"));
+                app.tree.collapsed.remove(&format!("c{comp}/g{g}"));
             }
         }
         "ui.ungroup" => {
