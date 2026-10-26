@@ -35,6 +35,7 @@ fn a_component_from_another_design_pastes_with_its_history() {
     run(&mut source, "appearance.assign", json!({"bodies": ["Cube"], "color": "#abcdef"}));
     run(&mut source, "occurrence.copy", json!({"component": child}));
     run(&mut source, "component.activate", json!({"component": 0}));
+    run(&mut source, "occurrence.ground", json!({"occurrence": at, "grounded": false}));
     run(&mut source, "occurrence.move", json!({"occurrence": at, "translate": [0, 30, 0]}));
     let was = source.world_state().body("Cube").unwrap().mesh().bounds();
     let box_features = source.doc.features.len();
