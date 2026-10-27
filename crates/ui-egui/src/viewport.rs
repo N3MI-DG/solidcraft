@@ -365,6 +365,27 @@ pub fn scene_radius(app: &SolveApp) -> f64 {
     r.max(app.cam.half_height() * 2.0).max(10.0)
 }
 
+/// How far behind the nearest face a point of a body this size may lie and still count as on it,
+/// rather than through it: the body's own mesh error, with room to spare. A facet sits at most
+/// a chord tolerance inside its surface, and that tolerance is a fraction of the body's size
+/// (see [`DisplayQuality::chord`]), so a tolerance taken from the body is the same whatever the
+/// camera does. One cut from the scene or the camera instead reached through a small part in a
+/// large assembly, and reached further with every step of zoom out.
+///
+/// [`DisplayQuality::chord`]: solidcraft_engine::doc::display_quality::DisplayQuality::chord
+pub(crate) fn pick_slack(size: f64) -> f64 {
+    use solidcraft_engine::doc::display_quality::DisplayQuality;
+    // The coarsest level, so the slack covers the mesh at any display quality.
+    DisplayQuality::Coarse.chord(size) * 4.0
+}
+
+/// The slack for the whole scene, for picks that belong to no one body (a sketch profile or a
+/// plane against the face it lies on).
+pub(crate) fn scene_pick_slack(app: &SolveApp) -> f64 {
+    let b = scene_bounds(app);
+    pick_slack(if b.is_empty() { 100.0 } else { b.diagonal() })
+}
+
 pub fn projection(app: &SolveApp, rect: Rect) -> Proj {
     let mut cam = app.cam;
     // Render owns an explicit product camera, including its saved/custom FOV.
@@ -2334,10 +2355,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         faces.v.retain(|(t, _)| *t < t_cap);
     }
     let hidden_from = cap.or(bestf.as_ref().map(|(t, _)| *t));
-    let slack = scene_radius(app) * 0.02;
-    // Wireframe draws no faces, so nothing hides an edge or a vertex.
+    let slack = scene_pick_slack(app);
+    // Wireframe draws no faces, so nothing hides an edge or a vertex. `slack` is the body's own:
+    // what counts as lying on the face in front depends on how coarsely that body is meshed.
     let wireframe = app.ui.visual_style == 2;
-    let visible = |p: Vec3| kept(p) && (wireframe || hidden_from.is_none_or(|t| (p - o).dot(d) <= t + slack));
+    let visible = |p: Vec3, slack: f64| kept(p) && (wireframe || hidden_from.is_none_or(|t| (p - o).dot(d) <= t + slack));
     // Vertices (edge end points) and edges, within 7 and 6 points of the cursor.
     let reach = crate::pick_index::reach(proj, pos, 8.0);
     let mut bestv = Near::new(all);
@@ -2346,11 +2368,13 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         if !app.session.body_visible(&b.name) {
             continue;
         }
-        // Only bodies whose outline on screen is near the cursor can have an edge under it.
-        if let Some((_, bb)) = bounds.get(i)
-            && screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos))
-        {
-            continue;
+        let mut body_slack = slack;
+        if let Some((_, bb)) = bounds.get(i) {
+            // Only bodies whose outline on screen is near the cursor can have an edge under it.
+            if screen_box(proj, bb, 8.0).is_some_and(|r| !r.contains(pos)) {
+                continue;
+            }
+            body_slack = pick_slack(bb.diagonal());
         }
         // In the part's own frame, as for faces; its points are moved back to where it stands.
         let (m, place) = b.mesh_in_place();
@@ -2371,7 +2395,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
                 for v in [e.first(), e.last()].into_iter().flatten().map(|v| at(*v)) {
                     if let Some(sp) = proj.to_screen(v) {
                         let dd = sp.distance(pos);
-                        if dd < 7.0 && visible(v) && bestv.wants(dd) {
+                        if dd < 7.0 && visible(v, body_slack) && bestv.wants(dd) {
                             bestv.offer(dd, Hit::Vertex { body: b.name.clone(), point: v });
                         }
                     }
@@ -2382,7 +2406,7 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
             let dd = seg_dist(pos, a, c);
             // Visible where the cursor is: the edge's point under the cursor, not an end or
             // the middle, which can lie deeper than the face the cursor is on.
-            if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, p0, p1)) {
+            if dd < 6.0 && beste.wants(dd) && visible(ray_segment_closest(o, d, p0, p1), body_slack) {
                 beste.offer(dd, Hit::Edge { body: b.name.clone(), index: ei, mid: at(polyline_mid(e)) });
             }
         }
