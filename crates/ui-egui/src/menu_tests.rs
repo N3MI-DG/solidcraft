@@ -1502,6 +1502,46 @@ fn appearance_submenu_closes_when_the_pointer_moves_to_another_row() {
 }
 
 #[test]
+fn only_one_row_is_lit_while_a_flyout_is_closing() {
+    use crate::scenario::{Harness, rect_of};
+    fn lit_rows(h: &Harness, rows: &[Item]) -> Vec<String> {
+        fn filled(shape: &egui::Shape, r: egui::Rect, found: &mut bool) {
+            match shape {
+                egui::Shape::Rect(rect) => *found |= rect.rect == r && rect.fill == crate::theme::Tokens::get().accent_soft,
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| filled(s, r, found)),
+                _ => {}
+            }
+        }
+        rows.iter()
+            .filter(|i| {
+                rect_of(&format!("menu:{}", i.id)).is_some_and(|r| {
+                    let mut found = false;
+                    h.shapes.iter().for_each(|s| filled(&s.shape, r, &mut found));
+                    found
+                })
+            })
+            .map(|i| i.label.clone())
+            .collect()
+    }
+    let mut h = Harness::new();
+    h.app = sample_app();
+    h.frames(3);
+    let target = Target::Body { name: body(&h.app) };
+    let rows = context_menu::items(&h.app, &target);
+    context_menu::open_for(&mut h.app, pos2(400.0, 180.0), target);
+    h.frames(2);
+    h.step(&json!({"move":[10, 10]})).unwrap();
+    h.step(&json!({"move":{"handle":"menu:ui.appearance"}})).unwrap();
+    h.frames(2);
+    assert_eq!(lit_rows(&h, &rows), vec!["Appearance".to_string()], "the hovered parent of the open flyout is lit");
+    let other = rows.iter().find(|i| i.enabled && i.children.is_empty()).unwrap();
+    h.step(&json!({"move":{"handle":format!("menu:{}", other.id)}})).unwrap();
+    h.frames(2);
+    assert!(rect_of("menu:appearance.assign:Aluminum - Satin").is_some(), "the flyout is still closing");
+    assert_eq!(lit_rows(&h, &rows), vec![other.label.clone()], "the parent gives up its highlight as soon as the pointer leaves it");
+}
+
+#[test]
 fn narrow_overflow_submenu_keeps_opening_click_and_accepts_the_next_click() {
     use crate::scenario::Harness;
     let mut h = Harness::new();
