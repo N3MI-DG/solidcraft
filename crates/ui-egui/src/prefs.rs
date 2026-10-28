@@ -620,6 +620,10 @@ preference_settings! {
     graphics_adapter: String = String::new(), PAGE_GRAPHICS;
     /// Soft contact shading in the GPU viewport; optional and applied immediately.
     ambient_occlusion: bool = false, PAGE_GRAPHICS;
+    /// Shade the viewport in linear light over a hemisphere sky fill (`soft_lit` in
+    /// `assets/shaders/viewport.wgsl`). On by default; turning it off restores the flat
+    /// shading of 0.25 and earlier, which scales the sRGB colour by a lighting factor.
+    soft_shading: bool = true, PAGE_GRAPHICS => check_tr("ui.soft_shading");
     /// Optional schematic markings on threaded cylindrical walls; off for new and older preferences.
     cosmetic_threads: bool = false, PAGE_GRAPHICS;
     /// The grid turns to the upright origin plane facing a side view (#1470). Off by default: the
@@ -5080,6 +5084,32 @@ mod ambient_occlusion_tests {
         assert_eq!(h.app.cam, camera);
         assert_eq!(h.app.session.doc.to_json(), design);
         assert!(h.app.session.undo.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod soft_shading_tests {
+    use super::*;
+
+    /// Soft shading is on by default, and turning it off is what gives back the flat shading of
+    /// 0.25 and earlier. The setting persists, cancels, resets and reads over the control
+    /// channel like any other.
+    #[test]
+    fn soft_shading_is_on_by_default_and_can_be_turned_off() {
+        // A settings file written before soft shading existed: the field falls back to its
+        // default, so an upgrade brings the new shading with it.
+        let old: Prefs = serde_json::from_value(json!({"msaa": 4})).unwrap();
+        assert!(old.soft_shading);
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"open":"Graphics", "soft_shading":false}));
+        assert!(!h.app.preferences.soft_shading);
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(!restored.preferences.soft_shading, "the choice is kept across a restart");
+        h.call("ui.prefs", json!({"button":"defaults"}));
+        assert!(h.app.preferences.soft_shading, "resetting the page brings soft shading back");
+        h.call("ui.prefs", json!({"button":"cancel"}));
+        assert!(!h.app.preferences.soft_shading, "cancelling leaves the choice as it was");
     }
 }
 

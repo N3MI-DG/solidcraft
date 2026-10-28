@@ -279,7 +279,17 @@ pub(crate) fn render_offscreen(
         back,
         eye,
         size,
-        Offscreen { tess, product: false, srgb: false, analysis, analysis_colors: colors, ssaa: 1.0, ao_radius: 0.0 },
+        Offscreen {
+            tess,
+            product: false,
+            srgb: false,
+            analysis,
+            analysis_colors: colors,
+            ssaa: 1.0,
+            ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
+        },
     )
 }
 
@@ -299,7 +309,17 @@ pub(crate) fn render_product_offscreen(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: true, srgb, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius: 0.0 },
+        Offscreen {
+            tess: None,
+            product: true,
+            srgb,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa: 1.0,
+            ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
+        },
     )
 }
 
@@ -312,6 +332,8 @@ struct Offscreen<'a> {
     analysis_colors: [f32; 36],
     ssaa: f32,
     ao_radius: f32,
+    soft_shading: bool,
+    up_is_y: bool,
 }
 
 /// [`render_offscreen`] of a scene supersampled `ssaa` times (1: off).
@@ -331,7 +353,17 @@ pub(crate) fn render_offscreen_ssaa(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa, ao_radius: 0.0 },
+        Offscreen {
+            tess: None,
+            product: false,
+            srgb: false,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa,
+            ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
+        },
     )
 }
 
@@ -352,7 +384,17 @@ pub(crate) fn render_offscreen_ao(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius },
+        Offscreen {
+            tess: None,
+            product: false,
+            srgb: false,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa: 1.0,
+            ao_radius,
+            soft_shading: false,
+            up_is_y: false,
+        },
     )
 }
 
@@ -366,7 +408,7 @@ fn offscreen(
     size: u32,
     options: Offscreen<'_>,
 ) -> Option<Vec<u8>> {
-    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa, ao_radius } = options;
+    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa, ao_radius, soft_shading, up_is_y } = options;
     let (adapter, device, queue) = offscreen_device()?;
     eprintln!("offscreen adapter: {:?}", adapter.get_info().backend);
     let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -399,6 +441,8 @@ fn offscreen(
         outline: false,
         eye,
         ao_radius,
+        soft_shading,
+        up_is_y,
         ssaa,
         hover_tint: [0.0; 3],
         selection_tint: [0.0; 3],

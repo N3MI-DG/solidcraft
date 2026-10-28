@@ -10,7 +10,8 @@ struct U {
     acc_u: vec4<f32>,  // accessibility map axes (xyz, offset)
     acc_v: vec4<f32>,
     eye: vec4<f32>,    // eye position, w = 1 for perspective (0: orthographic, looking along -back)
-    ao: vec4<f32>,     // radius in world units (zero: disabled)
+    ao: vec4<f32>,     // x = occlusion radius in world units (zero: disabled), y = 1 for soft
+                       // shading, z = 1 when Y is the world's up axis (0: Z)
     // analysis colours (`theme::AnalysisColors`): draft positive, between, negative; reachable,
     // blocked; curvature flat, middle, tight
     ana_c: array<vec4<f32>, 8>,
@@ -22,6 +23,11 @@ struct U {
 
 fn reversed() -> bool {
     return u.depth.x > 0.5;
+}
+
+/// Is the viewport soft-shaded (the `soft_shading` preference)? See [`soft_lit`].
+fn soft_shading() -> bool {
+    return u.ao.y > 0.5;
 }
 
 /// Clip-space depth measured the usual way (0 at the near plane, w at the far one), whichever
@@ -49,6 +55,11 @@ fn palette(i: u32) -> vec4<f32> {
 
 fn to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(c, pow((c + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4)), c > vec3<f32>(0.04045));
+}
+
+/// Linear light back to an sRGB-encoded colour (the inverse of [`to_linear`]).
+fn to_srgb(c: vec3<f32>) -> vec3<f32> {
+    return select(c * 12.92, 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055), c > vec3<f32>(0.0031308));
 }
 
 fn out_color(c: vec4<f32>) -> vec4<f32> {
@@ -486,9 +497,46 @@ fn lit_color(i: TOut, visibility: f32, base: vec4<f32>) -> vec4<f32> {
     let diff = max(dot(n, key), 0.0);
     let fill = max(dot(n, v), 0.0);
     let h = normalize(key + v);
-    let spec = pow(max(dot(n, h), 0.0), 40.0) * 0.25;
+    let gloss = pow(max(dot(n, h), 0.0), 40.0);
+    if (soft_shading()) {
+        return soft_lit(n, base, diff, fill, gloss, visibility);
+    }
+    let spec = gloss * 0.25;
     let k = 0.42 + 0.38 * diff + 0.25 * fill - (0.42 + 0.25 * fill) * (1.0 - visibility);
     return out_color(vec4<f32>(min(base.rgb * k + vec3<f32>(spec), vec3<f32>(1.0)), base.a));
+}
+
+/// Soft shading (the `soft_shading` preference): the same key and fill as the flat path, but
+/// summed as light rather than as a factor on an sRGB colour, over a sky fill that reaches the
+/// faces the key and fill miss.
+///
+/// Two differences from the flat path above:
+///
+/// 1. The colour is decoded to linear light, lit, and encoded back. Multiplying an sRGB-encoded
+///    colour by a shading factor, as the flat path does, darkens faster than light does, so its
+///    shading ramp falls away too steeply across a curved face.
+/// 2. A hemisphere fill stands in for the sky: upward-facing surfaces receive more than
+///    downward-facing ones, so a face the key light misses still carries a gradient
+///    instead of going flat. The 4% term is the Fresnel floor every dielectric reflects
+///    (Burley 2012); it is what keeps a near-black surface from reading as a hole.
+///
+/// Ambient occlusion attenuates the sky and the fill but not the key, as in the flat path.
+fn soft_lit(n: vec3<f32>, base: vec4<f32>, diff: f32, fill: f32, gloss: f32, visibility: f32) -> vec4<f32> {
+    // How far the surface faces the world's up axis, which the user may have set to Y (#3).
+    let facing_up = select(n.z, n.y, u.ao.z > 0.5);
+    let sky = mix(0.22, 0.38, facing_up * 0.5 + 0.5) * visibility;
+    let lit = 0.45 * diff + 0.20 * fill * visibility + sky;
+    let c = to_linear(base.rgb) * lit + vec3<f32>(0.15 * gloss + 0.04 * sky);
+    return soft_out(c, base.a);
+}
+
+/// A soft-shaded colour, already in linear light, written the way the target wants it.
+fn soft_out(c: vec3<f32>, a: f32) -> vec4<f32> {
+    let clamped = min(c, vec3<f32>(1.0));
+    if (u.back.w > 0.5) {
+        return vec4<f32>(clamped, a);
+    }
+    return vec4<f32>(to_srgb(clamped), a);
 }
 
 // Lines, decals and ghosts are drawn at their own depth: opaque faces are pushed back by their

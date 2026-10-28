@@ -69,13 +69,40 @@ impl Pass {
     }
 }
 
-pub(crate) fn shade(n: Vec3, view_dir: Vec3, base: [f64; 3]) -> [f64; 3] {
+/// One sRGB channel as linear light.
+fn to_linear(c: f64) -> f64 {
+    if c > 0.04045 { ((c + 0.055) / 1.055).powf(2.4) } else { c / 12.92 }
+}
+
+/// Linear light back to an sRGB-encoded channel (the inverse of [`to_linear`]).
+fn to_srgb(c: f64) -> f64 {
+    if c > 0.0031308 { 1.055 * c.powf(1.0 / 2.4) - 0.055 } else { c * 12.92 }
+}
+
+/// The viewport's shading, kept the same here so a headless picture matches what the window
+/// shows: `lit_color` and `soft_lit` in `assets/shaders/viewport.wgsl`.
+///
+/// `soft` carries the world's up direction when the scene is soft-shaded, since the sky fill is
+/// the one part of the shading that depends on which way is up; `None` is the flat shading of
+/// 0.25 and earlier.
+pub(crate) fn shade(n: Vec3, view_dir: Vec3, base: [f64; 3], soft: Option<Vec3>) -> [f64; 3] {
     let n = if n.dot(view_dir) < 0.0 { -n } else { n };
     let key = (view_dir * 0.8 + Vec3::new(-0.3, 0.2, 0.6)).normalized().unwrap_or(view_dir);
     let diff = n.dot(key).max(0.0);
     let fill = n.dot(view_dir).max(0.0);
     let h = (key + view_dir).normalized().unwrap_or(view_dir);
-    let spec = n.dot(h).max(0.0).powi(40) * 0.25;
+    let gloss = n.dot(h).max(0.0).powi(40);
+    if let Some(up) = soft {
+        let sky = 0.22 + (0.38 - 0.22) * (n.dot(up) * 0.5 + 0.5);
+        let lit = 0.45 * diff + 0.20 * fill + sky;
+        let add = 0.15 * gloss + 0.04 * sky;
+        return [
+            to_srgb((to_linear(base[0]) * lit + add).min(1.0)),
+            to_srgb((to_linear(base[1]) * lit + add).min(1.0)),
+            to_srgb((to_linear(base[2]) * lit + add).min(1.0)),
+        ];
+    }
+    let spec = gloss * 0.25;
     let k = 0.42 + 0.38 * diff + 0.25 * fill;
     [(base[0] * k + spec).min(1.0), (base[1] * k + spec).min(1.0), (base[2] * k + spec).min(1.0)]
 }
@@ -83,6 +110,8 @@ pub(crate) fn shade(n: Vec3, view_dir: Vec3, base: [f64; 3]) -> [f64; 3] {
 /// Render a scene with the camera into an RGBA canvas of `w × h` pixels.
 pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
     let (w, h) = (w.clamp(1, MAX_DIM), h.clamp(1, MAX_DIM));
+    // The sky fill follows the world's up axis, which the user may have set to Y (#3).
+    let sky_up = scene.soft_shading.then(|| cam.up.dir());
     let (sw, sh) = (w * SS, h * SS);
     let mut c = Canvas::new(sw, sh);
     let (top, bot) = scene.background.unwrap_or((Rgb(236, 240, 245), Rgb(205, 212, 222)));
@@ -206,7 +235,7 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
                                 c.put(x, y, tinted.map(|v| v * k), 1.0);
                                 continue;
                             }
-                            let mut col = shade(n, view_dir, base);
+                            let mut col = shade(n, view_dir, base, sky_up);
                             let ndv = n.dot(view_dir).abs();
                             if curved && ndv < 0.14 {
                                 let a = 1.0 - ndv / 0.14;
@@ -364,6 +393,91 @@ mod tests {
     use crate::scene::{SceneLine, SceneMesh};
     use solidcraft_geom::Mesh;
     use std::sync::Arc;
+
+    /// Turning soft shading off gives back the shading of 0.25 and earlier, factor and all, so
+    /// the `soft_shading` preference really does restore what users had.
+    #[test]
+    fn flat_shading_is_the_old_formula() {
+        let view = Vec3::Z;
+        for n in [Vec3::Z, Vec3::X, Vec3::new(0.3, -0.5, 0.8).normalized().unwrap()] {
+            for base in [[0.05, 0.05, 0.05], [0.5, 0.5, 0.5], [0.9, 0.2, 0.1]] {
+                let key = (view * 0.8 + Vec3::new(-0.3, 0.2, 0.6)).normalized().unwrap_or(view);
+                let nn = if n.dot(view) < 0.0 { -n } else { n };
+                let h = (key + view).normalized().unwrap_or(view);
+                let spec = nn.dot(h).max(0.0).powi(40) * 0.25;
+                let k = 0.42 + 0.38 * nn.dot(key).max(0.0) + 0.25 * nn.dot(view).max(0.0);
+                let old = [(base[0] * k + spec).min(1.0), (base[1] * k + spec).min(1.0), (base[2] * k + spec).min(1.0)];
+                assert_eq!(shade(n, view, base, None), old, "normal {n:?}, base {base:?}");
+            }
+        }
+    }
+
+    /// Soft shading lifts a near-black surface the key light barely reaches well clear of
+    /// black, which is the whole point of it: in the flat shading a dark board is a hole.
+    #[test]
+    fn soft_shading_lifts_dark_surfaces() {
+        let view = Vec3::Z;
+        let base = [0.05, 0.05, 0.05];
+        for n in [Vec3::new(0.3, -0.5, 0.8).normalized().unwrap(), Vec3::new(0.9, 0.1, 0.2).normalized().unwrap()] {
+            let flat = shade(n, view, base, None)[0];
+            let soft = shade(n, view, base, Some(Vec3::Z))[0];
+            assert!(flat < 0.06, "the flat shading is meant to leave this face near black, not {flat}");
+            assert!(soft > 0.10, "soft shading leaves {soft} too close to black on normal {n:?}");
+            assert!(soft > flat * 2.0, "soft {soft} barely lifts flat {flat} on normal {n:?}");
+        }
+    }
+
+    /// The sky fill shapes faces the key light treats alike: two normals the key and the fill
+    /// reach equally, one tilted up and one down, come out the same colour in the flat shading
+    /// and a step apart under soft shading.
+    ///
+    /// The pair is a mirror image across the plane through the key and view directions, which is
+    /// what makes their key and fill terms equal while their Z components differ.
+    #[test]
+    fn soft_shading_separates_faces_by_how_they_tilt() {
+        let view = -Vec3::Y;
+        let up = Vec3::new(0.837882, -0.349918, 0.418941);
+        let down = Vec3::new(-0.837882, -0.349918, -0.418941);
+        for base in [[0.05, 0.05, 0.05], [0.5, 0.5, 0.5]] {
+            let flat_up = shade(up, view, base, None)[0];
+            let flat_down = shade(down, view, base, None)[0];
+            assert!((flat_up - flat_down).abs() < 1e-6, "flat shading already separates {flat_up} and {flat_down}");
+            let soft_up = shade(up, view, base, Some(Vec3::Z))[0];
+            let soft_down = shade(down, view, base, Some(Vec3::Z))[0];
+            // Well over one step of an 8-bit channel (1/255), so it survives to the screen.
+            assert!(soft_up - soft_down > 0.01, "the sky barely separates {soft_up} and {soft_down} on base {base:?}");
+        }
+    }
+
+    /// The sky follows the world's up axis: a pair of faces that lean the same way along Z but
+    /// opposite ways along Y is separated with Y up (#3) and not with Z up.
+    ///
+    /// As in the test above the pair is a mirror image across the plane through the key and view
+    /// directions, so their key and fill terms match and only the facing differs.
+    #[test]
+    fn the_sky_follows_the_up_axis() {
+        let view = -Vec3::Z;
+        let base = [0.5, 0.5, 0.5];
+        let a = Vec3::new(0.499255, 0.748927, -0.435722);
+        let b = Vec3::new(-0.499255, -0.748927, -0.435722);
+        let gap = |up: Option<Vec3>| (shade(a, view, base, up)[0] - shade(b, view, base, up)[0]).abs();
+        assert!(gap(None) < 1e-4, "flat shading already separates the pair by {}", gap(None));
+        assert!(gap(Some(Vec3::Z)) < 1e-4, "neither face leans along Z, so Z up should not separate them");
+        assert!(gap(Some(Vec3::Y)) > 0.01, "with Y up the pair should separate, not by {}", gap(Some(Vec3::Y)));
+    }
+
+    /// Soft shading leaves a mid-grey face about where it was: it is meant to read as better
+    /// shaping, not as the whole model getting brighter.
+    #[test]
+    fn soft_shading_keeps_mid_tones_near_where_they_were() {
+        let view = Vec3::Z;
+        let base = [0.5, 0.5, 0.5];
+        for n in [Vec3::Z, Vec3::new(0.3, -0.5, 0.8).normalized().unwrap()] {
+            let flat = shade(n, view, base, None)[0];
+            let soft = shade(n, view, base, Some(Vec3::Z))[0];
+            assert!((soft - flat).abs() < 0.1, "flat {flat} and soft {soft} are further apart than intended on {n:?}");
+        }
+    }
 
     /// Lines are cut by the section in 3D: the kept piece ends on the plane.
     #[test]

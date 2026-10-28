@@ -308,6 +308,19 @@ A point or a curve in a sketch.
 - **Elsewhere:** sketch entity, sketch geometry, sketch element.
 - **For translators:** "entity" names both points and curves.
 
+### soft shading
+
+Viewport shading that adds up light arriving at a surface and converts the total to a colour,
+over a fill that varies between the faces pointing up and those pointing down.
+
+- **In SolidCraft:** the `soft_shading` preference on the Graphics settings page; `soft_lit` in
+  `assets/shaders/viewport.wgsl` and `shade` in `crates/render/src/raster.rs`.
+- **Don't use:** realistic shading, soft lighting, ambient lighting (that names the fill alone,
+  not the whole model).
+- **Elsewhere:** linear-space shading, gamma-correct shading; the fill alone is a hemisphere or
+  sky light.
+- **For translators:** "soft" describes how the shading falls off across a face, not a blur.
+
 ### standard part
 
 A ready-made component, such as a screw, nut, washer, pin or bearing, that SolidCraft builds from

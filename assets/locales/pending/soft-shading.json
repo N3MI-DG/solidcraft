@@ -1,0 +1,22 @@
+{
+  "de": {
+    "ui.soft_shading": "Weiche Schattierung",
+    "ui.soft_shading_help": "Beleuchtet schattierte Flächen als Licht statt als Faktor auf ihrer Farbe und füllt die vom Hauptlicht nicht erreichten Flächen mit einem Himmelsverlauf. Ausschalten für die flache Schattierung früherer Versionen."
+  },
+  "en": {
+    "ui.soft_shading": "Soft shading",
+    "ui.soft_shading_help": "Lights shaded faces as light rather than as a factor on their colour, and fills the faces the key light misses with a sky gradient. Turn it off for the flat shading of earlier versions."
+  },
+  "ja": {
+    "ui.soft_shading": "ソフトシェーディング",
+    "ui.soft_shading_help": "陰影の付いた面を、色に掛ける係数ではなく光として計算し、キーライトが届かない面を空のグラデーションで満たします。以前のバージョンのフラットな陰影に戻すにはオフにします。"
+  },
+  "ko": {
+    "ui.soft_shading": "부드러운 셰이딩",
+    "ui.soft_shading_help": "음영이 있는 면을 색상에 곱하는 계수가 아니라 빛으로 계산하고, 주 광원이 닿지 않는 면을 하늘 그라데이션으로 채웁니다. 이전 버전의 평면 음영을 사용하려면 끄십시오."
+  },
+  "zh": {
+    "ui.soft_shading": "柔和着色",
+    "ui.soft_shading_help": "将着色面按光照计算，而不是作为颜色的系数，并用天空渐变填充主光源照不到的面。关闭即可恢复旧版本的平面着色。"
+  }
+}

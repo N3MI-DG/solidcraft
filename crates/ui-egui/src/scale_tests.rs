@@ -287,6 +287,8 @@ pub(crate) fn view_frame(
         outline: false,
         eye: [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }],
         ao_radius: 0.0,
+        soft_shading: false,
+        up_is_y: false,
         ssaa: 1.0,
         hover_tint: [f32::from(t.hover_face_lift) / 255.0; 3],
         selection_tint: [0.4, 0.6, 0.9],

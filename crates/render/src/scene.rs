@@ -67,7 +67,6 @@ pub struct SceneLine {
     pub on_top: bool,
 }
 
-#[derive(Default)]
 pub struct Scene {
     pub meshes: Vec<SceneMesh>,
     pub lines: Vec<SceneLine>,
@@ -86,6 +85,27 @@ pub struct Scene {
     pub plain_cap: bool,
     /// A surface analysis shading the meshes (zebra, draft, curvature map, ...).
     pub analysis: Option<SceneAnalysis>,
+    /// Shade in linear light over a hemisphere sky fill rather than scaling the sRGB colour by
+    /// a lighting factor, as the viewport does under its `soft_shading` preference. On by
+    /// default, so a headless picture matches the window.
+    pub soft_shading: bool,
+}
+
+impl Default for Scene {
+    fn default() -> Scene {
+        Scene {
+            meshes: Vec::new(),
+            lines: Vec::new(),
+            grid: Vec::new(),
+            background: None,
+            radius: 0.0,
+            clip: None,
+            cap: None,
+            plain_cap: false,
+            analysis: None,
+            soft_shading: true,
+        }
+    }
 }
 
 /// The section cap's default tint, as in the viewport.

@@ -3924,6 +3924,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             } else {
                 0.0
             },
+            // Wireframe draws no shaded faces, so the shading model makes no difference to it.
+            soft_shading: app.preferences.soft_shading && app.ui.visual_style != 2,
+            up_is_y: app.ui.up_axis == solidcraft_engine::render::UpAxis::Y,
             eye: {
                 let e = proj.cam.eye().to_f32();
                 [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }]
@@ -7122,6 +7125,8 @@ mod tests {
                     outline: true,
                     eye: [e[0], e[1], e[2], if proj.cam.fov > 0.0 { 1.0 } else { 0.0 }],
                     ao_radius: 0.0,
+                    soft_shading: false,
+                    up_is_y: false,
                     ssaa: 1.0,
                     hover_tint: [0.0; 3],
                     selection_tint: [0.0; 3],

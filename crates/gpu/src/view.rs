@@ -150,8 +150,8 @@ fn octahedral6(n: [f32; 3]) -> u32 {
     (q(y).min(63) << 6) | q(x).min(63)
 }
 /// The shader's `U`: the view-projection matrix, 10 `vec4`s (the tenth carries the ambient
-/// occlusion radius), the 8 analysis colours, their flags, the depth direction and the two
-/// whole-body highlight colours (`uniform_bytes`).
+/// occlusion radius, the soft-shading flag and the up axis), the 8 analysis colours, their
+/// flags, the depth direction and the two whole-body highlight colours (`uniform_bytes`).
 const UNIFORM_SIZE: u64 = 416;
 
 /// A body drawn from its display plan, evaluated on the GPU: the plan, and a palette index per
@@ -950,6 +950,12 @@ pub struct Frame {
     pub eye: [f32; 4],
     /// World-space occlusion radius; zero skips the depth prepass and all AO sampling.
     pub ao_radius: f32,
+    /// Shade in linear light over a hemisphere sky fill (the `soft_shading` preference) rather
+    /// than scaling the sRGB colour by a lighting factor. See `soft_lit` in the viewport shader.
+    pub soft_shading: bool,
+    /// Y is the world's up axis (#3), so the sky fill comes from +Y rather than +Z. Only soft
+    /// shading reads it.
+    pub up_is_y: bool,
     /// Supersampling (#1288): draw the frame this many times the viewport's pixels in each
     /// direction and filter it down (1: off). Under 1 the frame is drawn smaller and filtered up
     /// (the product preview past its pixel budget, #1464).
@@ -3190,6 +3196,8 @@ fn frame_key(cb: &Frame) -> u64 {
     cb.selection_tint.map(f32::to_bits).hash(&mut h);
     cb.outline.hash(&mut h);
     cb.ao_radius.to_bits().hash(&mut h);
+    cb.soft_shading.hash(&mut h);
+    cb.up_is_y.hash(&mut h);
     cb.ssaa.to_bits().hash(&mut h);
     for img in &cb.images {
         img.id.hash(&mut h);
@@ -3999,7 +4007,7 @@ pub fn uniform_bytes(cb: &Frame, w: f32, h: f32, linear: bool, reversed: bool) -
         None => v.extend([0.0; 8]),
     }
     v.extend(cb.eye);
-    v.extend([cb.ao_radius, 0.0, 0.0, 0.0]);
+    v.extend([cb.ao_radius, f32::from(cb.soft_shading), f32::from(cb.up_is_y), 0.0]);
     v.extend(cb.analysis_colors);
     v.extend([if reversed { 1.0 } else { 0.0 }, FACE_STEPS as f32, FACE_SLOPE, 0.0]);
     v.extend([cb.hover_tint[0], cb.hover_tint[1], cb.hover_tint[2], 0.0]);
@@ -4194,6 +4202,8 @@ mod tests {
             outline: false,
             eye: [0.0; 4],
             ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
             ssaa: 1.0,
         }
     }
@@ -4237,6 +4247,8 @@ mod tests {
             ("selection tint", key(|f| f.selection_tint = [0.4, 0.5, 0.6])),
             ("outline", key(|f| f.outline = true)),
             ("ambient occlusion", key(|f| f.ao_radius = 1.0)),
+            ("soft shading", key(|f| f.soft_shading = true)),
+            ("up axis", key(|f| f.up_is_y = true)),
             ("supersampling", key(|f| f.ssaa = 2.0)),
             ("image", key(|f| f.images.push(image(1)))),
             ("image pixels", key(|f| f.images.push(image(2)))),
@@ -4516,6 +4528,8 @@ mod glass_tests {
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
             ssaa: 1.0,
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
@@ -4689,6 +4703,8 @@ mod glass_tests {
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
+            soft_shading: false,
+            up_is_y: false,
             ssaa,
         }
     }
