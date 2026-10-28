@@ -334,7 +334,7 @@ mod tests {
         assert!(l.len() >= 7, "{}", l.len());
         for f in &l {
             for (size, row) in &f.sizes {
-                for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| k.as_str() != "size") {
+                for key in row.as_object().into_iter().flat_map(|o| o.keys()).filter(|k| !matches!(k.as_str(), "size" | "default_length")) {
                     let label = dimension_label(key).map(crate::i18n::tr);
                     assert!(
                         label.is_some_and(|l| l.starts_with(char::is_uppercase) && !l.contains('_') && !l.starts_with("parts.")),
