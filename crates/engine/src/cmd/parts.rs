@@ -424,7 +424,8 @@ fn library(_s: &mut Session, p: &Value) -> Result<Value> {
             _ => Vec::new(),
         };
         let (_, name, standard) = FAMILIES.iter().find(|f| f.0 == id).copied().unwrap_or(("", "", ""));
-        let lengths = matches!(id, "socket_head_cap_screw" | "button_head_cap_screw" | "hex_bolt" | "set_screw" | "dowel_pin").then_some(LENGTHS.to_vec());
+        let lengths =
+            matches!(id, "socket_head_cap_screw" | "button_head_cap_screw" | "hex_bolt" | "set_screw" | "dowel_pin").then_some(LENGTHS.to_vec());
         if lengths.is_some() {
             for row in &mut sizes {
                 let Some(size) = row.get("size").and_then(Value::as_str).map(str::to_string) else { continue };
