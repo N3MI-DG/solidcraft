@@ -799,6 +799,9 @@ pub(crate) fn number_field<T: egui::emath::Numeric>(
     suffix: &str,
 ) -> Response {
     let response = ui.add(egui::DragValue::new(value).range(range).speed(speed).suffix(suffix).custom_parser(crate::prefs::parse_number));
+    if response.has_focus() {
+        crate::prefs_search::note_key_sink(ui.ctx());
+    }
     Tokens::get().input_bevel(ui, &response);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::drag_value(ui.is_enabled(), value.to_f64());
