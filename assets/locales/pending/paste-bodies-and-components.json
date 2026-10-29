@@ -7,5 +7,14 @@
   },
   "zh": {
     "cmd.component_paste_from_design": "从其他设计粘贴"
+  },
+  "ar": {
+    "cmd.component_paste_from_design": "لصق من تصميم آخر"
+  },
+  "he": {
+    "cmd.component_paste_from_design": "הדבק מעיצוב אחר"
+  },
+  "vi": {
+    "cmd.component_paste_from_design": "Dán từ thiết kế khác"
   }
 }
