@@ -200,14 +200,6 @@ pub(crate) fn fit_bounds(mut cam: Camera, bounds: &Aabb3, layout: &Layout, fov: 
     {
         return None;
     }
-    // Home and Fit put the model in the middle of the view: `drawable` says how much room the
-    // floating controls leave, `middle` says where the middle of the view is. Framing into
-    // `drawable` itself centred the model in the gap between the compass and the navigation bar,
-    // which left it low and to one side of an otherwise empty view.
-    let room = Rect::from_center_size(layout.middle.center(), layout.drawable.size()).intersect(layout.viewport);
-    if !room.is_positive() || !room.is_finite() {
-        return None;
-    }
     let original_fov = cam.fov;
     cam.fov = fov;
     let (r, u, b) = cam.basis();
@@ -228,6 +220,23 @@ pub(crate) fn fit_bounds(mut cam: Camera, bounds: &Aabb3, layout: &Layout, fov: 
         depth = depth.max(d.dot(b).abs());
     }
     let h = f64::from(layout.viewport.height());
+    let drawable = layout.drawable;
+    let hh = (hx * h / f64::from(drawable.width())).max(hy * h / f64::from(drawable.height())).max(0.5);
+    // Home and Fit put the model in the middle of the view. `drawable` decides its size and keeps
+    // it clear of every control; the room it leaves over in either direction moves the model
+    // towards `middle`, the middle of the view, instead of the middle of the gap between the
+    // compass and the navigation bar, which left it low and to one side of an otherwise empty view.
+    let size = vec2((hx * h / hh) as f32, (hy * h / hh) as f32).min(drawable.size());
+    let toward = |want: f32, lo: f32, hi: f32| if lo <= hi { want.clamp(lo, hi) } else { (lo + hi) * 0.5 };
+    let at = pos2(
+        toward(layout.middle.center().x, drawable.left() + size.x * 0.5, drawable.right() - size.x * 0.5),
+        toward(layout.middle.center().y, drawable.top() + size.y * 0.5, drawable.bottom() - size.y * 0.5),
+    );
+    let half = vec2((at.x - drawable.left()).min(drawable.right() - at.x), (at.y - drawable.top()).min(drawable.bottom() - at.y));
+    let room = Rect::from_center_size(at, half * 2.0);
+    if !room.is_positive() || !room.is_finite() {
+        return None;
+    }
     let hh = (hx * h / f64::from(room.width())).max(hy * h / f64::from(room.height())).max(0.5);
     let offset = room.center() - layout.viewport.center();
     let tangent = if perspective { (fov * 0.5).tan() } else { 0.4 };
