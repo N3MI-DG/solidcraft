@@ -2,22 +2,70 @@
   "en": {
     "ui.instances": "Instances"
   },
+  "ar": {
+    "ui.instances": "النسخ"
+  },
+  "bs": {
+    "ui.instances": "Instance"
+  },
+  "cs": {
+    "ui.instances": "Instance"
+  },
+  "da": {
+    "ui.instances": "Forekomster"
+  },
   "de": {
     "ui.instances": "Instanzen"
+  },
+  "en-GB": {
+    "ui.instances": "Instances"
   },
   "es": {
     "ui.instances": "Instancias"
   },
+  "fi": {
+    "ui.instances": "Esiintymät"
+  },
   "fr": {
     "ui.instances": "Instances"
+  },
+  "he": {
+    "ui.instances": "מופעים"
+  },
+  "hr": {
+    "ui.instances": "Instance"
   },
   "it": {
     "ui.instances": "Istanze"
   },
+  "ja": {
+    "ui.instances": "インスタンス数"
+  },
+  "ko": {
+    "ui.instances": "인스턴스"
+  },
   "nl": {
     "ui.instances": "Instanties"
   },
+  "pl": {
+    "ui.instances": "Wystąpienia"
+  },
   "pt-BR": {
     "ui.instances": "Instâncias"
+  },
+  "sr": {
+    "ui.instances": "Инстанце"
+  },
+  "uk": {
+    "ui.instances": "Екземпляри"
+  },
+  "vi": {
+    "ui.instances": "Số bản"
+  },
+  "zh": {
+    "ui.instances": "实例数"
+  },
+  "zh-TW": {
+    "ui.instances": "實例數"
   }
 }
