@@ -2520,7 +2520,15 @@ const ENDPOINT_JOIN: f64 = 1e-4;
 /// A corner counts when the curves share the point, when a coincident constraint makes the two
 /// ends one point, or when the ends simply lie on each other. The offset then trims a corner
 /// that runs past the crossing and extends one that stops short, so the new curves intersect.
-fn chain(sk: &Sketch, start: usize, pool: &[usize]) -> (Vec<(usize, bool)>, bool) {
+///
+/// Where more than two curves meet, a picked curve there is the way on: an arch's arc and its
+/// sides picked without the chord across its foot are one chain, not the arc on its own with its
+/// corners left apart. Where the picks do not settle it, the chain keeps to the region on the
+/// offset's side (`left`: the offset lies left of `start` walked forward), turning toward that
+/// side as sharply as the curves there allow: an arch's side offset inward goes round the
+/// rectangle below the chord, outward round the whole arch. Without a side, or with a free-form
+/// curve at the corner, the chain ends there.
+fn chain(sk: &Sketch, start: usize, pool: &[usize], picked: &[usize], left: Option<bool>) -> (Vec<(usize, bool)>, bool) {
     // Ends joined by a coincident constraint are one joint, as well as a shared point: lines drawn
     // one by one meet at their own points, held together by constraints, and must chain the same
     // (else each is offset on its own, to the left of the way it was drawn).
@@ -2548,18 +2556,59 @@ fn chain(sk: &Sketch, start: usize, pool: &[usize]) -> (Vec<(usize, bool)>, bool
             _ => false,
         }
     };
-    let next = |from: usize, at: usize, used: &[usize]| -> Option<usize> {
-        let users: Vec<usize> = pool.iter().copied().filter(|c| ends(*c).is_some_and(|(a, b)| same(a, at) || same(b, at))).collect();
-        if users.len() != 2 {
-            return None;
+    // The unit tangent of curve `c` at its end `at`, pointing away from that end into the curve.
+    let leaving = |c: usize, at: usize| -> Option<Vec2> {
+        let shape = sk.shape(c)?;
+        let (a, b) = ends(c)?;
+        let (t0, t1) = shape.range();
+        if same(a, at) {
+            Some(shape.tangent(t0))
+        } else if same(b, at) {
+            Some(shape.tangent(t1) * -1.0)
+        } else {
+            None
         }
-        users.into_iter().find(|c| *c != from && !used.contains(c))
+    };
+    // `ahead`: walking the chain's way (forward from the start), else back from it.
+    let next = |from: usize, at: usize, used: &[usize], ahead: bool| -> Option<usize> {
+        let others: Vec<usize> =
+            pool.iter().copied().filter(|c| *c != from && ends(*c).is_some_and(|(a, b)| same(a, at) || same(b, at))).collect();
+        let chosen = match others.as_slice() {
+            [] => return None,
+            [only] => *only,
+            _ => {
+                let mut ways: Vec<usize> = others.iter().copied().filter(|c| picked.contains(c)).collect();
+                if ways.len() == 1 {
+                    *ways.first()?
+                } else {
+                    if ways.is_empty() {
+                        ways = others;
+                    }
+                    // The region kept is left of the walk when walking ahead toward a left offset,
+                    // or back from a right one.
+                    let keep_left = ahead == left?;
+                    let arriving = leaving(from, at)? * -1.0;
+                    let mut turns = ways
+                        .iter()
+                        .map(|c| leaving(*c, at).map(|v| (*c, arriving.cross(v).atan2(arriving.dot(v)) * if keep_left { 1.0 } else { -1.0 })))
+                        .collect::<Option<Vec<_>>>()?;
+                    turns.sort_by(|x, y| y.1.total_cmp(&x.1));
+                    match turns.as_slice() {
+                        // Two ways leaving along one tangent: which bends harder is not settled here.
+                        [(_, t), (_, u), ..] if (t - u).abs() <= 1e-9 => return None,
+                        [(c, _), ..] => *c,
+                        [] => return None,
+                    }
+                }
+            }
+        };
+        (!used.contains(&chosen)).then_some(chosen)
     };
     let mut fwd = vec![(start, true)];
     let mut used = vec![start];
     let (mut cur, mut at) = (start, s1);
     let mut closed = false;
-    while let Some(n) = next(cur, at, &used) {
+    while let Some(n) = next(cur, at, &used, true) {
         let Some((a, b)) = ends(n) else { break };
         let forward = same(a, at);
         fwd.push((n, forward));
@@ -2576,7 +2625,7 @@ fn chain(sk: &Sketch, start: usize, pool: &[usize]) -> (Vec<(usize, bool)>, bool
         // Walk backwards from the start.
         let (mut cur, mut at) = (start, s0);
         let mut back = Vec::new();
-        while let Some(n) = next(cur, at, &used) {
+        while let Some(n) = next(cur, at, &used, false) {
             let Some((a, b)) = ends(n) else { break };
             let forward = same(b, at);
             back.push((n, forward));
@@ -2954,14 +3003,15 @@ fn offset_group(sk: &mut Sketch, ids: &[String], eligible: &std::collections::Ha
     } else {
         sel.clone()
     };
-    let (order, closed) = chain(sk, first, &pool);
     // Side: toward `side`, else the sign. A positive distance offsets to the left of the walk.
     // A line or an arc says directly which side `side` is on (the half-plane; inside or outside
     // the circle, as for a circle above), so neither rounding of a tiny step nor an arc too small
     // for the distance can turn it round; other curves compare both offsets' distance to it.
+    // The chain walks its first curve forward, so the side is settled before the walk, which
+    // keeps to the region on that side where curves branch.
     let d = match side {
         Some(q) => {
-            let forward = order.iter().find(|x| x.0 == first).is_none_or(|x| x.1);
+            let forward = true;
             let left = match sk.curves.get(first).map(|c| c.kind.clone()) {
                 Some(CurveKind::Line { a, b }) => {
                     let (a, b) = (sk.point(a).unwrap_or_default(), sk.point(b).unwrap_or_default());
@@ -2983,6 +3033,9 @@ fn offset_group(sk: &mut Sketch, ids: &[String], eligible: &std::collections::Ha
         }
         None => d0,
     };
+    // Both sides at once follow one chain, so neither side's region chooses it.
+    let left = (!symmetric && distance2.is_none() && d != 0.0).then_some(d > 0.0);
+    let (order, closed) = chain(sk, first, &pool, &sel, left);
     let runs = offset_runs(d, symmetric, distance2);
     if order.iter().any(|(i, _)| sk.shape(*i).is_none()) {
         // A smooth free-form entity is offset from exact pieces. One curve gets a linked
